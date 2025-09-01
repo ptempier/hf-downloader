@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hugging Face Model Downloader</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        {% include '_shared_header.html' %}
+        
+        <main>
+            <h2 class="page-title">Download</h2>
+            <form id="downloadForm">
+                <div class="form-group">
+                    <label for="repoId">Repository ID:</label>
+                    <input type="text" id="repoId" name="repoId" 
+                           placeholder="e.g., microsoft/DialoGPT-medium" required>
+                    <small>Format: username/model-name</small>
+                </div>
+                
+                <div class="form-group">
+                    <label for="quantPattern">Quantization Pattern (RegExp):</label>
+                    <input type="text" id="quantPattern" name="quantPattern" 
+                           placeholder="e.g., F16, Q4_K_M, .gguf">
+                    <small>Leave empty to download all files. Examples: F16, Q4_K_M, .safetensors</small>
+                </div>
+                
+                <button type="submit" id="downloadBtn">Start Download</button>
+            </form>
+            
+            <div id="progressContainer" class="hidden">
+                <h3>Download Progress</h3>
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                    <span id="progressText">0%</span>
+                </div>
+                <div id="statusMessage" class="status-message"></div>
+            </div>
+            
+            <div id="logContainer" class="hidden">
+                <h3>Download Log</h3>
+                <div id="logOutput"></div>
+                <button id="clearLogBtn">Clear Log</button>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Robust loader: try server-served Socket.IO client, fall back to CDN, then load app script -->
+    <script>
+    (function(){
+        function loadScript(src, onload, onerror){
+            var s = document.createElement('script');
+            s.src = src;
+            s.async = true;
+            s.onload = onload;
+            s.onerror = onerror;
+            document.head.appendChild(s);
+        }
+
+        var serverSrc = '/socket.io/socket.io.js';
+        var cdnSrc = 'https://cdn.socket.io/4.5.4/socket.io.min.js';
+    var appSrc = "{{ url_for('static', filename='script.js') }}";
+
+        loadScript(serverSrc, function(){
+            // server-provided client loaded
+            loadScript(appSrc);
+        }, function(){
+            console.warn('Server socket.io client failed, falling back to CDN');
+            loadScript(cdnSrc, function(){
+                loadScript(appSrc);
+            }, function(){
+                console.warn('CDN socket.io client failed; real-time disabled');
+                loadScript(appSrc);
+            });
+        });
+    })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  hf-downloader:
+    build: .
+    container_name: hf-model-downloader
+    ports:
+      - "5000:5000"  # Single port for both interfaces
+    volumes:
+      - ./models:/models:rw  # Mount models directory
+      - hf-cache:/home/appuser/.cache/huggingface  # Cache HuggingFace models
+    environment:
+      - HF_HUB_ENABLE_HF_TRANSFER=1
+      # Optional: Add your HuggingFace token for private models
+      # - HF_TOKEN=your_hf_token_here
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    # Resource limits (adjust based on your needs)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+volumes:
+  hf-cache:
+    driver: local
