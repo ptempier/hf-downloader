@@ -36,7 +36,9 @@ const logs = [];
 
 // Helper function to build URLs
 function buildURL(path) {
-    return BASE_URL + '/' + path.replace(/^\/+/, '');
+    // Remove leading slashes from path and ensure single slash between BASE_URL and path
+    const cleanPath = path.replace(/^\/+/, '');
+    return BASE_URL ? `${BASE_URL}/${cleanPath}` : `/${cleanPath}`;
 }
 
 // Utility functions
