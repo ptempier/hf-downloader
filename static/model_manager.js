@@ -1,3 +1,6 @@
+// Get base URL from the window global set by the template
+const BASE_URL = window.APP_BASE || '';
+
 // DOM elements
 const refreshBtn = document.getElementById('refreshBtn');
 const searchInput = document.getElementById('searchInput');
@@ -13,6 +16,17 @@ const cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
 // State
 let allModels = [];
 let currentModelToDelete = null;
+
+// Helper function to build URLs
+function buildURL(path) {
+    if (BASE_URL && !BASE_URL.endsWith('/')) {
+        return BASE_URL + '/' + path;
+    } else if (BASE_URL) {
+        return BASE_URL + path;
+    } else {
+        return path;
+    }
+}
 
 // Utility functions
 function formatBytes(bytes) {
@@ -136,11 +150,14 @@ function createModelHTML(model) {
 
 function renderModels(models) {
     if (models.length === 0) {
+        // Use base-aware URL for the link
+        const downloadUrl = buildURL('./');
+        
         modelsContainer.innerHTML = `
             <div class="no-models">
-                <h3>📁 No Models Found</h3>
+                <h3>🔍 No Models Found</h3>
                 <p>No models found in /models directory.</p>
-                <p><a href="http://localhost:5000" target="_blank">Download some models first</a></p>
+                <p><a href="${downloadUrl}" target="_blank">Download some models first</a></p>
             </div>
         `;
         return;
@@ -200,7 +217,7 @@ function showDeleteModal(modelName, modelPath) {
 async function loadModels() {
     try {
         showLoading();
-        const response = await fetch('/api/models');
+        const response = await fetch(buildURL('api/models'));
         
         if (!response.ok) {
             throw new Error('Failed to load models');
@@ -220,7 +237,7 @@ async function loadModels() {
 
 async function updateModel(repoId, quantPattern = '') {
     try {
-        const response = await fetch('/api/models/update', {
+        const response = await fetch(buildURL('api/models/update'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -237,7 +254,7 @@ async function updateModel(repoId, quantPattern = '') {
             throw new Error(result.error || 'Update failed');
         }
         
-    alert(`Update started for ${repoId}. This may take a while.`);
+        alert(`Update started for ${repoId}. This may take a while.`);
         
         // Refresh models after a short delay
         setTimeout(() => {
@@ -252,7 +269,7 @@ async function updateModel(repoId, quantPattern = '') {
 
 async function deleteModel(modelPath) {
     try {
-        const response = await fetch('/api/models/delete', {
+        const response = await fetch(buildURL('api/models/delete'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'

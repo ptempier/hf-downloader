@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Model Manager</title>
+    <base href="{{ request.script_root }}{{ request.blueprint or '' }}/">
     <!-- Shared site styles (header/tabs/container) -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <!-- Page-specific styles -->
@@ -52,6 +53,11 @@
         </main>
     </div>
     
+    <!-- Pass base URL to JavaScript -->
+    <script>
+        window.APP_BASE = '{{ request.script_root }}{{ request.blueprint or "" }}';
+    </script>
+    
     <script>
     (function(){
         function loadScript(src, onload, onerror){
@@ -63,9 +69,9 @@
             document.head.appendChild(s);
         }
 
-        var serverSrc = '/socket.io/socket.io.js';
+        var serverSrc = 'socket.io/socket.io.js';
         var cdnSrc = 'https://cdn.socket.io/4.5.4/socket.io.min.js';
-        var appSrc = "{{ url_for('static', filename='model_manager.js') }}";
+        var appSrc = "static/model_manager.js";
 
         loadScript(serverSrc, function(){
             loadScript(appSrc);

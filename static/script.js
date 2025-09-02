@@ -1,7 +1,10 @@
+// Get base URL from the window global set by the template
+const BASE_URL = window.APP_BASE || '';
+
 // Initialize Socket.IO connection (guard if client library didn't load)
 let socket;
 if (typeof io !== 'undefined') {
-    socket = io();
+    socket = io(BASE_URL);
 } else {
     // Fallback noop socket to avoid runtime errors when the client script is missing
     console.warn('Socket.IO client not found (io is undefined). Real-time progress will be disabled.');
@@ -26,6 +29,17 @@ const clearLogBtn = document.getElementById('clearLogBtn');
 // State
 let isDownloading = false;
 const logs = [];
+
+// Helper function to build URLs
+function buildURL(path) {
+    if (BASE_URL && !BASE_URL.endsWith('/')) {
+        return BASE_URL + '/' + path;
+    } else if (BASE_URL) {
+        return BASE_URL + path;
+    } else {
+        return path;
+    }
+}
 
 // Utility functions
 function addLog(message, type = 'info') {
@@ -93,7 +107,7 @@ downloadForm.addEventListener('submit', async (e) => {
 
     try {
         startDownloadUI();
-        const response = await fetch('/download', {
+        const response = await fetch(buildURL('download'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -138,7 +152,7 @@ clearLogBtn.addEventListener('click', () => {
 // Check initial status on page load
 window.addEventListener('load', async () => {
     try {
-        const response = await fetch('/status');
+        const response = await fetch(buildURL('status'));
         const status = await response.json();
         if (status.status === 'downloading') {
             startDownloadUI();

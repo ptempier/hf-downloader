@@ -24,6 +24,7 @@ from model_manager import (
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'
+app.config['APPLICATION_ROOT'] = '/hf-downloader'
 # Use eventlet async mode so the server fully supports websocket transport and background tasks
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
@@ -168,7 +169,6 @@ def download_model(repo_id, quant_pattern):
 @app.route('/')
 def index():
     return render_template('index.html')
-
 
 @app.route('/favicon.ico')
 def favicon():
