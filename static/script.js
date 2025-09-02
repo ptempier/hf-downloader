@@ -1,10 +1,14 @@
 // Get base URL from the window global set by the template
 const BASE_URL = window.BASE_URL || '';
 
-// Initialize Socket.IO connection (guard if client library didn't load)
+// Initialize Socket.IO connection with proper path handling
 let socket;
 if (typeof io !== 'undefined') {
-    socket = io(BASE_URL);
+    // Configure Socket.IO client with the correct path for subdirectory deployments
+    const socketPath = BASE_URL ? `${BASE_URL}/socket.io` : '/socket.io';
+    socket = io(window.location.origin, {
+        path: socketPath
+    });
 } else {
     // Fallback noop socket to avoid runtime errors when the client script is missing
     console.warn('Socket.IO client not found (io is undefined). Real-time progress will be disabled.');
@@ -32,7 +36,7 @@ const logs = [];
 
 // Helper function to build URLs
 function buildURL(path) {
-    return BASE_URL + '/' + path;
+    return BASE_URL + '/' + path.replace(/^\/+/, '');
 }
 
 // Utility functions
@@ -58,7 +62,7 @@ function updateProgress(progress, status, message = '') {
         addLog(`❌ ${message}`, 'error');
     } else if (status === 'downloading') {
         statusMessage.classList.add('info');
-        addLog(`📥 ${message}`, 'info');
+        addLog(`🔥 ${message}`, 'info');
     }
 }
 

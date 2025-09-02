@@ -26,12 +26,14 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'
 
 # CONFIGURATION: Set your base URL here
-# For root hosting: base_url = "https://myserver.com"
-# For subfolder hosting: base_url = "https://myserver.com/myapp"
-base_url = ""  # Set this to your actual base URL
+# For root hosting: base_url = ""
+# For subfolder hosting: base_url = "/myapp" (no trailing slash, no domain)
+base_url = ""  # Set this to your actual base URL path (e.g., "/myapp")
 
 # Use eventlet async mode so the server fully supports websocket transport and background tasks
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+# Configure Socket.IO with proper path handling for subdirectory deployments
+socketio_path = f"{base_url}/socket.io" if base_url else "/socket.io"
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', path=socketio_path)
 
 # Set HF_TRANSFER for faster downloads
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
@@ -253,11 +255,12 @@ if __name__ == '__main__':
     print("\n" + "="*50)
     print("🚀 STARTING HUGGINGFACE MODEL DOWNLOADER")
     print("="*50)
-    print(f"📥 Download Interface: http://localhost:5000/")
-    print(f"📁 Model Manager: http://localhost:5000/manage")
+    print(f"🔥 Download Interface: http://localhost:5000{base_url}/")
+    print(f"🔍 Model Manager: http://localhost:5000{base_url}/manage")
     print(f"💾 Models Directory: /models/")
     if base_url:
-        print(f"🌐 Configured Base URL: {base_url}")
+        print(f"🌍 Configured Base URL Path: {base_url}")
+        print(f"🔌 Socket.IO Path: {socketio_path}")
     print("="*50)
 
     os.makedirs("/models", exist_ok=True)
