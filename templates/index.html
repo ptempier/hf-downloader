@@ -4,8 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hugging Face Model Downloader</title>
-    <base href="{{ request.script_root }}{{ request.blueprint or '' }}/">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ base_url }}/static/style.css">
 </head>
 <body>
     <div class="container">
@@ -50,7 +49,7 @@
     
     <!-- Pass base URL to JavaScript -->
     <script>
-        window.APP_BASE = '{{ request.script_root }}{{ request.blueprint or "" }}';
+        window.BASE_URL = '{{ base_url }}';
     </script>
     
     <!-- Robust loader: try server-served Socket.IO client, fall back to CDN, then load app script -->
@@ -65,9 +64,9 @@
             document.head.appendChild(s);
         }
 
-        var serverSrc = 'socket.io/socket.io.js';
+        var serverSrc = '{{ base_url }}/socket.io/socket.io.js';
         var cdnSrc = 'https://cdn.socket.io/4.5.4/socket.io.min.js';
-        var appSrc = "static/script.js";
+        var appSrc = "{{ base_url }}/static/script.js";
 
         loadScript(serverSrc, function(){
             // server-provided client loaded

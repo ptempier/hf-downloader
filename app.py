@@ -24,7 +24,12 @@ from model_manager import (
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'
-app.config['APPLICATION_ROOT'] = '/hf-downloader'
+
+# CONFIGURATION: Set your base URL here
+# For root hosting: base_url = "https://myserver.com"
+# For subfolder hosting: base_url = "https://myserver.com/myapp"
+base_url = ""  # Set this to your actual base URL
+
 # Use eventlet async mode so the server fully supports websocket transport and background tasks
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
@@ -45,6 +50,10 @@ def log_request():
 def log_response(response):
     print(f"📤 Response: {response.status_code} {response.status}")
     return response
+
+@app.context_processor
+def inject_base_url():
+    return dict(base_url=base_url)
 
 def download_model(repo_id, quant_pattern):
     global download_status
@@ -247,6 +256,8 @@ if __name__ == '__main__':
     print(f"📥 Download Interface: http://localhost:5000/")
     print(f"📁 Model Manager: http://localhost:5000/manage")
     print(f"💾 Models Directory: /models/")
+    if base_url:
+        print(f"🌐 Configured Base URL: {base_url}")
     print("="*50)
 
     os.makedirs("/models", exist_ok=True)

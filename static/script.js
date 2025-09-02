@@ -1,5 +1,5 @@
 // Get base URL from the window global set by the template
-const BASE_URL = window.APP_BASE || '';
+const BASE_URL = window.BASE_URL || '';
 
 // Initialize Socket.IO connection (guard if client library didn't load)
 let socket;
@@ -32,13 +32,7 @@ const logs = [];
 
 // Helper function to build URLs
 function buildURL(path) {
-    if (BASE_URL && !BASE_URL.endsWith('/')) {
-        return BASE_URL + '/' + path;
-    } else if (BASE_URL) {
-        return BASE_URL + path;
-    } else {
-        return path;
-    }
+    return BASE_URL + '/' + path;
 }
 
 // Utility functions
