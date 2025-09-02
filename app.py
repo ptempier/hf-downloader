@@ -28,7 +28,7 @@ app.config['SECRET_KEY'] = 'your-secret-key'
 # CONFIGURATION: Set your base URL here
 # For root hosting: base_url = ""
 # For subfolder hosting: base_url = "/myapp" (no trailing slash, no domain)
-base_url = ""  # Set this to your actual base URL path (e.g., "/myapp")
+base_url = "/hf-downloader"   # Set this to your actual base URL path (e.g., "/myapp")
 
 # Use eventlet async mode so the server fully supports websocket transport and background tasks
 # Configure Socket.IO with proper path handling for subdirectory deployments
