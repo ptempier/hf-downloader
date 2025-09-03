@@ -1,86 +1,79 @@
 # Hugging Face Model Downloader & Manager
 
-A simple Flask web interface for downloading and managing Hugging Face models with real-time progress tracking.
+Interface web Flask pour télécharger et gérer des modèles Hugging Face avec suivi temps réel.
 
-## Features
+## Vue d'ensemble
 
-### Download Interface (Port 5000)
-- Download models from Hugging Face Hub
-- Regex pattern filtering for quantization types
-- Real-time progress bar using WebSockets
-- Download logging and status tracking
-- Simple, clean interface
+**Objectif** : Interface web simple pour télécharger des modèles HF et les gérer localement
+**Architecture** : Application Flask unique avec Socket.IO pour temps réel
+**Déploiement** : Support des sous-dossiers (configurable via `base_url`)
 
-### Model Manager Interface (Port 5001)
-- Browse existing models in `/models/` directory
-- Group similar model files (safetensors, GGUF, etc.)
-- Update existing models
-- Delete models with confirmation
-- Search and filter models
-- Show file sizes and total model sizes
+## Fonctionnalités
+
+- **Téléchargement** : Modèles HF avec filtres de quantification, progress bar temps réel
+- **Gestion** : Navigation, groupement, mise à jour, suppression des modèles
+- **Interface** : Deux pages (Download/Manage) avec navigation par onglets
+
+## Structure du projet
+
+```
+/
+├── app.py                 # Serveur principal Flask + Socket.IO
+├── model_manager.py       # Logique scan/update/delete modèles
+├── templates/
+│   ├── index.html         # Page téléchargement
+│   ├── model_manager.html # Page gestion
+│   └── _shared_header.html# Header commun avec navigation
+└── static/
+    ├── script.js          # Frontend téléchargement
+    └── model_manager.js   # Frontend gestion
+```
+
+## Configuration importante
+
+**Base URL** : Variable `base_url` dans `app.py` pour déploiement sous-dossier
+```python
+base_url = "/hf-downloader"  # Pour https://example.com/hf-downloader/
+base_url = ""                # Pour https://example.com/ (racine)
+```
+
+**Répertoire modèles** : `/models/` (hardcodé dans le code)
+
+## Fichiers clés
+
+### Backend
+- `app.py` : Routes Flask (/download, /manage, /api/*), gestion Socket.IO, logique téléchargement
+- `model_manager.py` : Fonctions `scan_models()`, `update_model_func()`, `delete_model_func()`
+
+### Frontend
+- `script.js` / `model_manager.js` : Gestion Socket.IO avec support sous-dossiers, logique UI
+- Templates HTML : Configuration dynamique des chemins selon `base_url`
+
+### Points techniques critiques
+- **Socket.IO** : Path personnalisé pour sous-dossiers (`/base_url/socket.io`)
+- **Téléchargement** : Subprocess isolé pour éviter RecursionError
+- **Groupement** : Regroupement automatique des fichiers modèles (safetensors, GGUF, etc.)
 
 ## Installation
 
-1. **Install Python dependencies:**
 ```bash
 pip install -r requirements.txt
-```
-
-2. **Create the models directory:**
-```bash
 mkdir -p /models
-# Or adjust the path in the code if you prefer a different location
-```
-
-3. **Set up the file structure:**
-```
-project/
-├── app.py                          # Main download server
-├── model_manager.py                # Model management server
-├── requirements.txt
-├── templates/
-│   ├── index.html                  # Download interface
-│   └── model_manager.html          # Model manager interface
-└── static/
-    ├── style.css                   # Download interface styles
-    ├── model_manager.css           # Model manager styles
-    ├── script.js                   # Download interface JavaScript
-    └── model_manager.js            # Model manager JavaScript
-```
-
-## Usage
-
-### Starting the Server
-
-**Single Server:**
-```bash
 python app.py
 ```
-Access at: http://localhost:5000
 
-- **Download Interface**: http://localhost:5000/
-- **Model Manager**: http://localhost:5000/manage
+Accès : http://localhost:5000/[base_url]/
 
-### Downloading Models
+## Requirements principaux
 
-1. Go to http://localhost:5000
-2. Enter a repository ID (e.g., `microsoft/DialoGPT-medium`)
-3. Optionally add a quantization pattern (e.g., `F16`, `Q4_K_M`, `.gguf`)
-4. Click "Start Download"
-5. Watch the real-time progress bar
+- Flask, Flask-SocketIO
+- huggingface_hub
+- eventlet (async mode Socket.IO)
 
-### Managing Models
+## Usage API
 
-1. Go to http://localhost:5000/manage
-2. Browse your downloaded models
-3. Click file groups to expand and see individual files
-4. Use the search box to filter models
-5. Update or delete models as needed
+- `POST /download` : Démarre téléchargement
+- `GET /api/models` : Liste modèles
+- `POST /api/models/update` : Met à jour modèle
+- `POST /api/models/delete` : Supprime modèle
 
-## Configuration
-
-### Changing the Models Directory
-
-By default, models are stored in `/models/`. To change this:
-
-1. **In `app.py
