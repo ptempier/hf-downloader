@@ -76,3 +76,4 @@ Accès : http://localhost:5000/[base_url]/
 - `GET /api/models` : Liste modèles
 - `POST /api/models/update` : Met à jour modèle
 - `POST /api/models/delete` : Supprime modèle
+
