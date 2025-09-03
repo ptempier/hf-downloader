@@ -6,7 +6,7 @@ let socket;
 if (typeof io !== 'undefined') {
     // Configure Socket.IO client with the correct path for subdirectory deployments
     const socketPath = BASE_URL ? `${BASE_URL}/socket.io` : '/socket.io';
-    socket = io(window.location.origin, {
+    socket = io({
         path: socketPath
     });
 } else {

@@ -6,7 +6,7 @@ let socket;
 if (typeof io !== 'undefined') {
     // Configure Socket.IO client with the correct path for subdirectory deployments
     const socketPath = BASE_URL ? `${BASE_URL}/socket.io` : '/socket.io';
-    socket = io(window.location.origin, {
+    socket = io({
         path: socketPath
     });
 } else {
@@ -183,7 +183,7 @@ function renderModels(models) {
     if (models.length === 0) {
         modelsContainer.innerHTML = `
             <div class="error-message">
-                <h3>📁 No Models Found</h3>
+                <h3>🔍 No Models Found</h3>
                 <p>No models found in /models/ directory.</p>
                 <p>Download some models first using the <a href="${BASE_URL}/">Download</a> page.</p>
             </div>
