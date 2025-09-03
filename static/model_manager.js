@@ -3,21 +3,26 @@ const BASE_URL = window.BASE_URL || '';
 
 // Initialize Socket.IO connection with proper path handling
 let socket;
-if (typeof io !== 'undefined') {
-    // Configure Socket.IO client with the correct path for subdirectory deployments
-    const socketPath = BASE_URL ? `${BASE_URL}/socket.io` : '/socket.io';
-    socket = io(window.location.origin, {
-        path: socketPath
-    });
-} else {
-    // Fallback noop socket to avoid runtime errors when the client script is missing
-    console.warn('Socket.IO client not found (io is undefined). Real-time progress will be disabled.');
-    socket = {
-        on: () => {},
-        emit: () => {},
-        disconnect: () => {}
-    };
+function initializeSocket() {
+    if (typeof io !== 'undefined') {
+        // Configure Socket.IO client with the correct path for subdirectory deployments
+        const socketPath = BASE_URL ? `${BASE_URL}/socket.io` : '/socket.io';
+        socket = io({
+            path: socketPath
+        });
+    } else {
+        // Fallback noop socket to avoid runtime errors when the client script is missing
+        console.warn('Socket.IO client not found (io is undefined). Real-time progress will be disabled.');
+        socket = {
+            on: () => {},
+            emit: () => {},
+            disconnect: () => {}
+        };
+    }
 }
+
+// Initialize socket when script loads
+initializeSocket();
 
 // DOM elements
 const refreshBtn = document.getElementById('refreshBtn');
@@ -37,7 +42,9 @@ let currentModelToDelete = null;
 
 // Helper function to build URLs
 function buildURL(path) {
-    return BASE_URL + '/' + path.replace(/^\/+/, '');
+    // Remove leading slashes from path and ensure single slash between BASE_URL and path
+    const cleanPath = path.replace(/^\/+/, '');
+    return BASE_URL ? `${BASE_URL}/${cleanPath}` : `/${cleanPath}`;
 }
 
 // Utility functions
@@ -181,7 +188,7 @@ function renderModels(models) {
     if (models.length === 0) {
         modelsContainer.innerHTML = `
             <div class="error-message">
-                <h3>📁 No Models Found</h3>
+                <h3>🔍 No Models Found</h3>
                 <p>No models found in /models/ directory.</p>
                 <p>Download some models first using the <a href="${BASE_URL}/">Download</a> page.</p>
             </div>

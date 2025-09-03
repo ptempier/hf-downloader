@@ -3,21 +3,26 @@ const BASE_URL = window.BASE_URL || '';
 
 // Initialize Socket.IO connection with proper path handling
 let socket;
-if (typeof io !== 'undefined') {
-    // Configure Socket.IO client with the correct path for subdirectory deployments
-    const socketPath = BASE_URL ? `${BASE_URL}/socket.io` : '/socket.io';
-    socket = io(window.location.origin, {
-        path: socketPath
-    });
-} else {
-    // Fallback noop socket to avoid runtime errors when the client script is missing
-    console.warn('Socket.IO client not found (io is undefined). Real-time progress will be disabled.');
-    socket = {
-        on: () => {},
-        emit: () => {},
-        disconnect: () => {}
-    };
+function initializeSocket() {
+    if (typeof io !== 'undefined') {
+        // Configure Socket.IO client with the correct path for subdirectory deployments
+        const socketPath = BASE_URL ? `${BASE_URL}/socket.io` : '/socket.io';
+        socket = io({
+            path: socketPath
+        });
+    } else {
+        // Fallback noop socket to avoid runtime errors when the client script is missing
+        console.warn('Socket.IO client not found (io is undefined). Real-time progress will be disabled.');
+        socket = {
+            on: () => {},
+            emit: () => {},
+            disconnect: () => {}
+        };
+    }
 }
+
+// Initialize socket when script loads
+initializeSocket();
 
 // DOM elements
 const downloadForm = document.getElementById('downloadForm');
@@ -36,7 +41,9 @@ const logs = [];
 
 // Helper function to build URLs
 function buildURL(path) {
-    return BASE_URL + '/' + path.replace(/^\/+/, '');
+    // Remove leading slashes from path and ensure single slash between BASE_URL and path
+    const cleanPath = path.replace(/^\/+/, '');
+    return BASE_URL ? `${BASE_URL}/${cleanPath}` : `/${cleanPath}`;
 }
 
 // Utility functions
