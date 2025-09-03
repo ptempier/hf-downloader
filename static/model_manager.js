@@ -1,60 +1,32 @@
-// Get base URL from the window global set by the template
 const BASE_URL = window.BASE_URL || '';
 
-// Initialize Socket.IO connection with proper path handling
-let socket;
+// Initialize Socket.IO
 function initializeSocket() {
     if (typeof io !== 'undefined') {
-        // Configure Socket.IO client with the correct path for subdirectory deployments
         const socketPath = BASE_URL ? `${BASE_URL}/socket.io` : '/socket.io';
-        socket = io({
-            path: socketPath
-        });
+        return io({ path: socketPath });
     } else {
-        // Fallback noop socket to avoid runtime errors when the client script is missing
-        console.warn('Socket.IO client not found (io is undefined). Real-time progress will be disabled.');
-        socket = {
-            on: () => {},
-            emit: () => {},
-            disconnect: () => {}
-        };
+        console.warn('Socket.IO client not found.');
+        return { on: () => {}, emit: () => {}, disconnect: () => {} };
     }
 }
 
-// Initialize socket when script loads
-initializeSocket();
+let socket = initializeSocket();
 
 // DOM elements
 const refreshBtn = document.getElementById('refreshBtn');
 const searchInput = document.getElementById('searchInput');
 const loadingIndicator = document.getElementById('loadingIndicator');
 const modelsContainer = document.getElementById('modelsContainer');
-
-// Modal elements
 const deleteModal = document.getElementById('deleteModal');
 const deleteModelName = document.getElementById('deleteModelName');
-const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
-const cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
 
 // State
 let allModels = [];
 let currentModelToDelete = null;
 
-// Helper function to build URLs
-function buildURL(path) {
-    // Remove leading slashes from path and ensure single slash between BASE_URL and path
-    const cleanPath = path.replace(/^\/+/, '');
-    return BASE_URL ? `${BASE_URL}/${cleanPath}` : `/${cleanPath}`;
-}
-
-// Utility functions
-function formatBytes(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
+// Utilities
+const buildURL = (path) => BASE_URL ? `${BASE_URL}/${path.replace(/^\/+/, '')}` : `/${path.replace(/^\/+/, '')}`;
 
 function showLoading() {
     loadingIndicator.classList.remove('hidden');
@@ -75,36 +47,8 @@ function showError(message) {
     `;
 }
 
-function createFileGroupHTML(group) {
-    const filesHTML = group.files.map((file, idx) => {
-        return `
-            <div class="file-item">
-                <span class="file-name">${file.name}</span>
-                <span class="file-meta">
-                    <span class="file-index">${idx + 1}.</span>
-                    <span class="file-size">${file.size}</span>
-                    <span class="file-date">${file.date || ''}</span>
-                </span>
-            </div>
-        `;
-    }).join('');
-
-    return `
-        <div class="file-group">
-            <div class="file-group-header" onclick="toggleFileGroup(this)">
-                <span>${group.name} (${group.count} files - ${group.size})</span>
-                <span class="toggle-icon">▶</span>
-            </div>
-            <div class="file-group-content">
-                <div class="file-list">
-                    ${filesHTML}
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-function createFileItemHTML(file, idx) {
+// Create HTML elements
+function createFileHTML(file, idx) {
     return `
         <div class="file-item">
             <span class="file-name">${file.name}</span>
@@ -117,32 +61,44 @@ function createFileItemHTML(file, idx) {
     `;
 }
 
+function createFileGroupHTML(group) {
+    const filesHTML = group.files.map(createFileHTML).join('');
+    return `
+        <div class="file-group">
+            <div class="file-group-header" onclick="toggleFileGroup(this)">
+                <span>${group.name} (${group.count} files - ${group.size})</span>
+                <span class="toggle-icon">▶</span>
+            </div>
+            <div class="file-group-content">
+                <div class="file-list">${filesHTML}</div>
+            </div>
+        </div>
+    `;
+}
+
 function createModelHTML(model) {
     const groupsHTML = model.groups.map(createFileGroupHTML).join('');
+    
     let individualFilesHTML = '';
-    if (model.individual_files && model.individual_files.length > 0) {
-        const items = model.individual_files.map((f, i) => createFileItemHTML(f, i)).join('');
+    if (model.individual_files?.length > 0) {
+        const items = model.individual_files.map(createFileHTML).join('');
         individualFilesHTML = `
             <div class="file-group">
                 <div class="file-group-content expanded">
-                    <div class="file-list">
-                        ${items}
-                    </div>
+                    <div class="file-list">${items}</div>
                 </div>
             </div>
         `;
     }
     
-    const groupsTotal = model.groups ? model.groups.reduce((s, g) => s + (g.count || 0), 0) : 0;
-    const individualTotal = model.individual_files ? model.individual_files.length : 0;
-    const modelFileCount = groupsTotal + individualTotal;
+    const totalFiles = (model.groups?.reduce((s, g) => s + g.count, 0) || 0) + (model.individual_files?.length || 0);
     
     return `
         <div class="model-card" data-model-name="${model.name.toLowerCase()}">
             <div class="model-header">
                 <div class="model-info">
                     <div class="model-path">${model.path}</div>
-                    <div class="model-count">${modelFileCount} files</div>
+                    <div class="model-count">${totalFiles} files</div>
                 </div>
                 <div class="model-size-right">${model.total_size}</div>
                 <div class="model-actions">
@@ -150,37 +106,25 @@ function createModelHTML(model) {
                     <button class="btn-icon btn-danger" onclick="showDeleteModal('${model.name}', '${model.path}')" title="Delete Model">🗑</button>
                 </div>
             </div>
-            <div class="model-files">
-                ${groupsHTML}
-                ${individualFilesHTML}
-            </div>
+            <div class="model-files">${groupsHTML}${individualFilesHTML}</div>
         </div>
     `;
 }
 
+// UI functions
 function toggleFileGroup(header) {
     const content = header.nextElementSibling;
     const icon = header.querySelector('.toggle-icon');
-    
-    if (content.classList.contains('expanded')) {
-        content.classList.remove('expanded');
-        header.classList.remove('expanded');
-        icon.textContent = '▶';
-    } else {
-        content.classList.add('expanded');
-        header.classList.add('expanded');
-        icon.textContent = '▼';
-    }
+    const isExpanded = content.classList.toggle('expanded');
+    header.classList.toggle('expanded', isExpanded);
+    icon.textContent = isExpanded ? '▼' : '▶';
 }
 
 function filterModels() {
     const query = searchInput.value.toLowerCase().trim();
-    const modelCards = document.querySelectorAll('.model-card');
-    
-    modelCards.forEach(card => {
+    document.querySelectorAll('.model-card').forEach(card => {
         const modelName = card.dataset.modelName;
-        const isVisible = !query || modelName.includes(query);
-        card.style.display = isVisible ? 'block' : 'none';
+        card.style.display = (!query || modelName.includes(query)) ? 'block' : 'none';
     });
 }
 
@@ -195,11 +139,10 @@ function renderModels(models) {
         `;
         return;
     }
-
-    const modelsHTML = models.map(createModelHTML).join('');
-    modelsContainer.innerHTML = modelsHTML;
+    modelsContainer.innerHTML = models.map(createModelHTML).join('');
 }
 
+// API functions
 async function loadModels() {
     showLoading();
     try {
@@ -213,7 +156,6 @@ async function loadModels() {
     } catch (error) {
         hideLoading();
         showError(`Failed to load models: ${error.message}`);
-        console.error('Error loading models:', error);
     }
 }
 
@@ -226,16 +168,13 @@ async function updateModel(repoId) {
         });
         
         const result = await response.json();
-        if (response.ok) {
-            alert(`Update started for ${repoId}`);
-        } else {
-            alert(`Error: ${result.error}`);
-        }
+        alert(response.ok ? `Update started for ${repoId}` : `Error: ${result.error}`);
     } catch (error) {
         alert(`Error updating model: ${error.message}`);
     }
 }
 
+// Modal functions
 function showDeleteModal(modelName, modelPath) {
     currentModelToDelete = { name: modelName, path: modelPath };
     deleteModelName.textContent = modelName;
@@ -261,7 +200,7 @@ async function confirmDelete() {
         if (response.ok) {
             alert(`Model deleted: ${currentModelToDelete.name}`);
             hideDeleteModal();
-            loadModels(); // Refresh the list
+            loadModels();
         } else {
             alert(`Error: ${result.error}`);
         }
@@ -273,14 +212,10 @@ async function confirmDelete() {
 // Event listeners
 refreshBtn.addEventListener('click', loadModels);
 searchInput.addEventListener('input', filterModels);
-confirmDeleteBtn.addEventListener('click', confirmDelete);
-cancelDeleteBtn.addEventListener('click', hideDeleteModal);
-
-// Modal close handlers
+document.getElementById('confirmDeleteBtn').addEventListener('click', confirmDelete);
+document.getElementById('cancelDeleteBtn').addEventListener('click', hideDeleteModal);
 document.querySelector('.close').addEventListener('click', hideDeleteModal);
-deleteModal.addEventListener('click', (e) => {
-    if (e.target === deleteModal) hideDeleteModal();
-});
+deleteModal.addEventListener('click', (e) => e.target === deleteModal && hideDeleteModal());
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
@@ -291,9 +226,9 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// Socket.IO event handlers for real-time updates
+// Socket events
 socket.on('connect', () => console.log('Connected to server'));
 socket.on('disconnect', () => console.log('Disconnected from server'));
 
-// Load models on page load
+// Initialize
 window.addEventListener('load', loadModels);

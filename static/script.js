@@ -1,28 +1,17 @@
-// Get base URL from the window global set by the template
 const BASE_URL = window.BASE_URL || '';
 
-// Initialize Socket.IO connection with proper path handling
-let socket;
+// Initialize Socket.IO
 function initializeSocket() {
     if (typeof io !== 'undefined') {
-        // Configure Socket.IO client with the correct path for subdirectory deployments
         const socketPath = BASE_URL ? `${BASE_URL}/socket.io` : '/socket.io';
-        socket = io({
-            path: socketPath
-        });
+        return io({ path: socketPath });
     } else {
-        // Fallback noop socket to avoid runtime errors when the client script is missing
-        console.warn('Socket.IO client not found (io is undefined). Real-time progress will be disabled.');
-        socket = {
-            on: () => {},
-            emit: () => {},
-            disconnect: () => {}
-        };
+        console.warn('Socket.IO client not found. Real-time progress disabled.');
+        return { on: () => {}, emit: () => {}, disconnect: () => {} };
     }
 }
 
-// Initialize socket when script loads
-initializeSocket();
+let socket = initializeSocket();
 
 // DOM elements
 const downloadForm = document.getElementById('downloadForm');
@@ -33,24 +22,17 @@ const progressText = document.getElementById('progressText');
 const statusMessage = document.getElementById('statusMessage');
 const logContainer = document.getElementById('logContainer');
 const logOutput = document.getElementById('logOutput');
-const clearLogBtn = document.getElementById('clearLogBtn');
 
 // State
 let isDownloading = false;
 const logs = [];
 
-// Helper function to build URLs
-function buildURL(path) {
-    // Remove leading slashes from path and ensure single slash between BASE_URL and path
-    const cleanPath = path.replace(/^\/+/, '');
-    return BASE_URL ? `${BASE_URL}/${cleanPath}` : `/${cleanPath}`;
-}
+// Utilities
+const buildURL = (path) => BASE_URL ? `${BASE_URL}/${path.replace(/^\/+/, '')}` : `/${path.replace(/^\/+/, '')}`;
 
-// Utility functions
-function addLog(message, type = 'info') {
+function addLog(message) {
     const timestamp = new Date().toLocaleTimeString();
-    const logEntry = `[${timestamp}] ${message}`;
-    logs.push(logEntry);
+    logs.push(`[${timestamp}] ${message}`);
     logOutput.textContent = logs.join('\n');
     logOutput.scrollTop = logOutput.scrollHeight;
     logContainer.classList.remove('hidden');
@@ -60,36 +42,21 @@ function updateProgress(progress, status, message = '') {
     progressFill.style.width = `${progress}%`;
     progressText.textContent = `${Math.round(progress)}%`;
     statusMessage.textContent = message;
-    statusMessage.className = 'status-message';
-    if (status === 'completed') {
-        statusMessage.classList.add('success');
-        addLog(`✅ ${message}`, 'success');
-    } else if (status === 'error') {
-        statusMessage.classList.add('error');
-        addLog(`❌ ${message}`, 'error');
-    } else if (status === 'downloading') {
-        statusMessage.classList.add('info');
-        addLog(`🔥 ${message}`, 'info');
-    }
+    statusMessage.className = `status-message ${status}`;
+    
+    const statusIcons = { completed: '✅', error: '❌', downloading: '🔥' };
+    if (statusIcons[status]) addLog(`${statusIcons[status]} ${message}`);
 }
 
-function resetUI() {
-    isDownloading = false;
-    downloadBtn.disabled = false;
-    downloadBtn.textContent = 'Start Download';
-    progressContainer.classList.add('hidden');
-    updateProgress(0, 'idle', '');
+function setDownloadState(downloading) {
+    isDownloading = downloading;
+    downloadBtn.disabled = downloading;
+    downloadBtn.textContent = downloading ? 'Downloading...' : 'Start Download';
+    progressContainer.classList.toggle('hidden', !downloading);
+    if (downloading) addLog('🚀 Starting download...');
 }
 
-function startDownloadUI() {
-    isDownloading = true;
-    downloadBtn.disabled = true;
-    downloadBtn.textContent = 'Downloading...';
-    progressContainer.classList.remove('hidden');
-    addLog('🚀 Starting download...', 'info');
-}
-
-// Form submission handler
+// Form submission
 downloadForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (isDownloading) return;
@@ -100,82 +67,78 @@ downloadForm.addEventListener('submit', async (e) => {
         quant_pattern: formData.get('quantPattern').trim()
     };
 
-    if (!data.repo_id) {
-        alert('Please enter a repository ID');
-        return;
-    }
-
-    if (!data.repo_id.includes('/')) {
-        alert('Repository ID should be in format: username/model-name');
+    if (!data.repo_id || !data.repo_id.includes('/')) {
+        alert('Please enter a valid repository ID (username/model-name)');
         return;
     }
 
     try {
-        startDownloadUI();
+        setDownloadState(true);
         const response = await fetch(buildURL('download'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
+        
         const result = await response.json();
-        if (!response.ok) throw new Error(result.error || 'Download failed');
+        if (!response.ok) throw new Error(result.error);
 
-        addLog(`📋 Download request sent for: ${data.repo_id}`, 'info');
-        if (data.quant_pattern) addLog(`🔍 Pattern filter: ${data.quant_pattern}`, 'info');
+        addLog(`📋 Download request sent for: ${data.repo_id}`);
+        if (data.quant_pattern) addLog(`🔍 Pattern filter: ${data.quant_pattern}`);
 
     } catch (error) {
         updateProgress(0, 'error', `Error: ${error.message}`);
-        resetUI();
+        setDownloadState(false);
     }
 });
 
-// Socket.IO event handlers
-socket.on('connect', () => addLog('🔌 Connected to download server', 'info'));
+// Socket events
+socket.on('connect', () => addLog('🔌 Connected to download server'));
 socket.on('disconnect', () => {
-    addLog('🔌 Disconnected from download server', 'info');
+    addLog('🔌 Disconnected from server');
     if (isDownloading) {
         updateProgress(0, 'error', 'Connection lost during download');
-        resetUI();
+        setDownloadState(false);
     }
 });
 
 socket.on('download_progress', (data) => {
-    const { progress, status, message, downloaded, total } = data;
-    updateProgress(progress || 0, status, message);
-    if (downloaded && total) addLog(`📊 Progress: ${downloaded}/${total} files (${Math.round(progress)}%)`, 'info');
-    if (status === 'completed') setTimeout(resetUI, 3000);
-    if (status === 'error') resetUI();
+    const { progress = 0, status, message } = data;
+    updateProgress(progress, status, message);
+    
+    if (status === 'completed') setTimeout(() => setDownloadState(false), 3000);
+    if (status === 'error') setDownloadState(false);
 });
 
-// Clear log button handler
-clearLogBtn.addEventListener('click', () => {
+// UI handlers
+document.getElementById('clearLogBtn').addEventListener('click', () => {
     logs.length = 0;
     logOutput.textContent = '';
     logContainer.classList.add('hidden');
 });
 
-// Check initial status on page load
+document.getElementById('repoId').addEventListener('input', (e) => {
+    const isValid = !e.target.value || e.target.value.includes('/');
+    e.target.style.borderColor = isValid ? '#ddd' : '#dc3545';
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !isDownloading) {
+        downloadForm.dispatchEvent(new Event('submit'));
+    }
+});
+
+// Check status on load
 window.addEventListener('load', async () => {
     try {
         const response = await fetch(buildURL('status'));
         const status = await response.json();
         if (status.status === 'downloading') {
-            startDownloadUI();
+            setDownloadState(true);
             updateProgress(status.progress, status.status, 'Download in progress...');
         }
-    } catch (error) {}
-});
-
-// Form input validation and UX improvements
-document.getElementById('repoId').addEventListener('input', (e) => {
-    const value = e.target.value;
-    const isValid = value.includes('/') && value.trim().length > 0;
-    e.target.style.borderColor = (!value || isValid) ? '#ddd' : '#dc3545';
-});
-
-// Keyboard shortcuts (Ctrl/Cmd+Enter to submit)
-document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        if (!isDownloading) downloadForm.dispatchEvent(new Event('submit'));
+    } catch (error) {
+        // Silently fail
     }
 });

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-# eventlet must monkey-patch the stdlib before other libraries (Flask/werkzeug)
 import eventlet
 eventlet.monkey_patch()
 
@@ -12,46 +11,24 @@ import sys
 import json
 import subprocess
 import threading
-from huggingface_hub import snapshot_download
 from huggingface_hub.utils import HfHubHTTPError
-
-# Import model management functions
-from model_manager import (
-    scan_models,
-    update_model_func,
-    delete_model_func
-)
+from model_manager import scan_models, update_model_func, delete_model_func
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'
 
-# CONFIGURATION: Set your base URL here
-# For root hosting: base_url = ""
-# For subfolder hosting: base_url = "/myapp" (no trailing slash, no domain)
-base_url = "/hf-downloader"   # Set this to your actual base URL path (e.g., "/myapp")
+# CONFIGURATION
+base_url = "/hf-downloader"
 
-# Use eventlet async mode so the server fully supports websocket transport and background tasks
-# Configure Socket.IO with proper path handling for subdirectory deployments
+# Configure Socket.IO
 socketio_path = f"{base_url}/socket.io" if base_url else "/socket.io"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', path=socketio_path)
 
-# Set HF_TRANSFER for faster downloads
+# Set environment for faster downloads
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
-# Global variable to track download progress
+# Global download status
 download_status = {"progress": 0, "status": "idle", "current_file": ""}
-
-# Basic request logging
-@app.before_request
-def log_request():
-    print(f"\n📨 {request.method} {request.path}")
-    if request.method == 'POST' and request.content_type == 'application/json':
-        print(f"📋 Request data: {request.get_json()}")
-
-@app.after_request
-def log_response(response):
-    print(f"📤 Response: {response.status_code} {response.status}")
-    return response
 
 @app.context_processor
 def inject_base_url():
@@ -59,26 +36,20 @@ def inject_base_url():
 
 def download_model(repo_id, quant_pattern):
     global download_status
-
-    print(f"\n=== DOWNLOAD STARTED ===")
-    print(f"Repository ID: {repo_id}")
-    print(f"Quantization Pattern: '{quant_pattern}'")
-
+    
     try:
         download_status = {"progress": 0, "status": "starting", "current_file": ""}
-        try:
-            socketio.emit('download_progress', download_status)
-        except Exception:
-            # If emit fails (no clients), continue the download and emit when possible
-            pass
+        socketio.emit('download_progress', download_status)
 
         local_dir = f"/models/{repo_id}"
         os.makedirs(local_dir, exist_ok=True)
 
-        if quant_pattern.strip():
-            allow_patterns = [f"*{quant_pattern}*"]
-        else:
-            allow_patterns = None
+        # Prepare subprocess arguments
+        child_args = json.dumps({
+            'repo_id': repo_id,
+            'local_dir': local_dir,
+            'allow_patterns': [f"*{quant_pattern}*"] if quant_pattern.strip() else None
+        })
 
         socketio.emit('download_progress', {
             'progress': 0,
@@ -86,17 +57,7 @@ def download_model(repo_id, quant_pattern):
             'message': f'Starting download of {repo_id}'
         })
 
-        # Perform the snapshot download; snapshot_download does not provide fine-grained
-        # progress callbacks here, so emit coarse updates before and after.
-        # Run snapshot_download in an isolated subprocess to avoid recursion or
-        # interpreter-level issues (some environments may cause unexpected
-        # RecursionError inside the same process). We serialize args via JSON.
-        child_args = json.dumps({
-            'repo_id': repo_id,
-            'local_dir': local_dir,
-            'allow_patterns': allow_patterns
-        })
-
+        # Run download in subprocess
         child_cmd = [sys.executable, '-u', '-c',
             'import sys, json; from huggingface_hub import snapshot_download;\n'
             'args = json.loads(sys.argv[1]);\n'
@@ -110,71 +71,27 @@ def download_model(repo_id, quant_pattern):
 
         proc = subprocess.run(child_cmd, capture_output=True, text=True, env=env)
         if proc.returncode != 0:
-            # Log child stdout/stderr for diagnosis
-            print(f"Snapshot download subprocess failed (rc={proc.returncode})")
-            print(proc.stdout)
-            print(proc.stderr)
-            raise Exception(f"Child download failed: rc={proc.returncode} stderr={proc.stderr}")
+            raise Exception(f"Download failed: {proc.stderr}")
 
         download_status = {"progress": 100, "status": "completed", "current_file": ""}
-        try:
-            socketio.emit('download_progress', {
-                'progress': 100,
-                'status': 'completed',
-                'message': f'Successfully downloaded {repo_id}'
-            })
-        except Exception:
-            pass
+        socketio.emit('download_progress', {
+            'progress': 100,
+            'status': 'completed',
+            'message': f'Successfully downloaded {repo_id}'
+        })
 
-    except HfHubHTTPError as e:
-        download_status = {"progress": 0, "status": "error", "current_file": str(e)}
+    except Exception as e:
+        error_msg = str(e)
+        download_status = {"progress": 0, "status": "error", "current_file": error_msg}
         socketio.emit('download_progress', {
             'progress': 0,
             'status': 'error',
-            'message': f'Error downloading {repo_id}: {str(e)}'
+            'message': f'Error: {error_msg}'
         })
-    except RecursionError as e:
-        # Capture detailed recursion information for diagnosis
-        tb = traceback.format_exc()
-        info = (
-            f"RecursionError while downloading {repo_id}: {e}\n"
-            f"Recursion limit: {sys.getrecursionlimit()}\n"
-            f"Traceback:\n{tb}"
-        )
-        print(info)
-        # Persist to a file for post-mortem inspection
-        try:
-            with open('/tmp/hf_downloader_recursion.log', 'w') as f:
-                f.write(info)
-        except Exception:
-            pass
-        download_status = {"progress": 0, "status": "error", "current_file": str(e)}
-        try:
-            socketio.emit('download_progress', {
-                'progress': 0,
-                'status': 'error',
-                'message': f'RecursionError during download: {str(e)} (see server logs)'
-            })
-        except Exception:
-            pass
-    except Exception as e:
-        tb = traceback.format_exc()
-        print(f"Unexpected error: {e}\n{tb}")
-        # Save a copy to disk to aid debugging
-        try:
-            with open('/tmp/hf_downloader_unexpected.log', 'w') as f:
-                f.write(f"{e}\n\n{tb}")
-        except Exception:
-            pass
-        download_status = {"progress": 0, "status": "error", "current_file": str(e)}
-        try:
-            socketio.emit('download_progress', {
-                'progress': 0,
-                'status': 'error',
-                'message': f'Unexpected error: {str(e)}'
-            })
-        except Exception:
-            pass
+        
+        # Log detailed error for debugging
+        with open('/tmp/hf_downloader_error.log', 'w') as f:
+            f.write(f"{e}\n\n{traceback.format_exc()}")
 
 # Routes
 @app.route('/')
@@ -183,7 +100,6 @@ def index():
 
 @app.route('/favicon.ico')
 def favicon():
-    # Return no content to avoid 404 noise when favicon is not provided
     return ('', 204)
 
 @app.route('/download', methods=['POST'])
@@ -198,24 +114,20 @@ def start_download():
     if download_status["status"] == "downloading":
         return jsonify({'error': 'Download already in progress'}), 400
 
-    # Use Socket.IO's background task helper so emits work reliably with the selected async mode
     socketio.start_background_task(download_model, repo_id, quant_pattern)
-
     return jsonify({'message': 'Download started'})
 
 @app.route('/status')
 def get_status():
     return jsonify(download_status)
 
-# MODEL MANAGER ROUTES
 @app.route('/manage')
 def model_manager():
     return render_template('model_manager.html')
 
 @app.route('/api/models')
 def api_models():
-    models = scan_models()
-    return jsonify(models)
+    return jsonify(scan_models())
 
 @app.route('/api/models/update', methods=['POST'])
 def api_update_model():
@@ -226,12 +138,7 @@ def api_update_model():
     if not repo_id:
         return jsonify({'error': 'Repository ID is required'}), 400
 
-    def update_thread():
-        update_model_func(repo_id, quant_pattern)
-
-    thread = threading.Thread(target=update_thread, daemon=True)
-    thread.start()
-
+    threading.Thread(target=update_model_func, args=(repo_id, quant_pattern), daemon=True).start()
     return jsonify({'message': f'Update started for {repo_id}'})
 
 @app.route('/api/models/delete', methods=['POST'])
@@ -244,25 +151,20 @@ def api_delete_model():
 
     try:
         success, message = delete_model_func(model_path)
-        if success:
-            return jsonify({'message': message})
-        else:
-            return jsonify({'error': message}), 500
+        return jsonify({'message': message} if success else {'error': message}), 200 if success else 500
     except Exception as e:
         return jsonify({'error': f'Error deleting model: {str(e)}'}), 500
 
 if __name__ == '__main__':
-    print("\n" + "="*50)
+    print(f"\n{'='*50}")
     print("🚀 STARTING HUGGINGFACE MODEL DOWNLOADER")
-    print("="*50)
+    print(f"{'='*50}")
     print(f"🔥 Download Interface: http://localhost:5000{base_url}/")
-    print(f"🔍 Model Manager: http://localhost:5000{base_url}/manage")
+    print(f"📁 Model Manager: http://localhost:5000{base_url}/manage")
     print(f"💾 Models Directory: /models/")
     if base_url:
-        print(f"🌍 Configured Base URL Path: {base_url}")
-        print(f"🔌 Socket.IO Path: {socketio_path}")
-    print("="*50)
+        print(f"🌐 Base URL Path: {base_url}")
+    print(f"{'='*50}")
 
     os.makedirs("/models", exist_ok=True)
-
     socketio.run(app, debug=True, host='0.0.0.0', port=5000)
