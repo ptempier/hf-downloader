@@ -142,8 +142,9 @@ function createModelHTML(model) {
             <div class="model-header">
                 <div class="model-info">
                     <div class="model-path">${model.path}</div>
-                    <div class="model-count">${modelFileCount} files</div>
                 </div>
+
+                    <div class="model-count">${modelFileCount} files</div>
                 <div class="model-size-right">${model.total_size}</div>
                 <div class="model-actions">
                     <button class="btn-icon btn-primary" onclick="updateModel('${model.name}')" title="Update Model">↻</button>

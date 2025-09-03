@@ -97,14 +97,13 @@ main {
 .model-card {
     background: #f8f9fa;
     border-radius: 6px;
-    padding: 0.75rem;
-    margin-bottom: 1rem;
+    padding: 0.2rem;
     border: 1px solid #e9ecef;
     transition: all 0.18s ease;
 }
 
 .model-card:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
     transform: translateY(-2px);
 }
 
@@ -112,7 +111,7 @@ main {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.1rem;
     flex-wrap: nowrap;
     gap: 0.5rem;
 }
@@ -206,9 +205,6 @@ main {
     background: #c82333;
 }
 
-.model-files {
-    margin-top: 1rem;
-}
 
 .file-group {
     /* Make the entire group share the grey header background for compactness */
@@ -220,7 +216,7 @@ main {
 }
 
 .file-group-header {
-    padding: 0.45rem 0.6rem;
+    padding: 0.1rem 0.1rem;
     font-weight: 700;
     color: #495057;
     cursor: pointer;
