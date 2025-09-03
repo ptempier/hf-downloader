@@ -68,16 +68,25 @@
             document.head.appendChild(s);
         }
 
-        var serverSrc = '{{ base_url }}/socket.io/socket.io.js';
+        // Fix double slash issue in server socket.io path
+        var baseUrl = '{{ base_url }}';
+        var serverSocketPath = baseUrl ? baseUrl + '/socket.io/socket.io.js' : '/socket.io/socket.io.js';
         var cdnSrc = 'https://cdn.socket.io/4.5.4/socket.io.min.js';
-        var appSrc = "{{ base_url }}/static/model_manager.js";
+        var appSrc = baseUrl ? baseUrl + '/static/model_manager.js' : '/static/model_manager.js';
 
-        loadScript(serverSrc, function(){
+        loadScript(serverSocketPath, function(){
+            // server-provided client loaded
             loadScript(appSrc);
         }, function(){
             console.warn('Server socket.io client failed, falling back to CDN');
             loadScript(cdnSrc, function(){
-                loadScript(appSrc);
+                // CDN client loaded, need to reinitialize socket with proper path
+                loadScript(appSrc, function(){
+                    // Reinitialize socket after CDN load
+                    if (typeof initializeSocket === 'function') {
+                        initializeSocket();
+                    }
+                });
             }, function(){
                 console.warn('CDN socket.io client failed; real-time disabled');
                 loadScript(appSrc);
