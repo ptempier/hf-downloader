@@ -818,29 +818,43 @@
         
         // Initialize application
         function init() {
+            console.log(`🚀 Initializing app with BASE_URL: "${BASE_URL}"`);
+            
             // Try to load Socket.IO and initialize
             const socketScript = document.createElement('script');
             const serverPath = BASE_URL ? `${BASE_URL}/socket.io/socket.io.js` : '/socket.io/socket.io.js';
             const cdnPath = 'https://cdn.socket.io/4.5.4/socket.io.min.js';
             
+            console.log(`📡 Trying server Socket.IO at: ${serverPath}`);
             socketScript.src = serverPath;
+            
             socketScript.onload = () => {
+                console.log('✅ Server Socket.IO loaded successfully');
                 initializeSocket();
                 setupSocketHandlers();
             };
+            
             socketScript.onerror = () => {
-                console.warn('Server Socket.IO failed, trying CDN');
+                console.warn('❌ Server Socket.IO failed, trying CDN');
                 const cdnScript = document.createElement('script');
                 cdnScript.src = cdnPath;
+                
                 cdnScript.onload = () => {
+                    console.log('✅ CDN Socket.IO loaded successfully');
                     initializeSocket();
                     setupSocketHandlers();
                 };
+                
                 cdnScript.onerror = () => {
-                    console.warn('Socket.IO unavailable - real-time features disabled');
+                    console.error('❌ Both server and CDN Socket.IO failed');
+                    addLog('❌ Socket.IO unavailable - real-time features disabled', 'error');
+                    // Initialize with dummy socket
+                    socket = { on: () => {}, emit: () => {}, disconnect: () => {} };
                 };
+                
                 document.head.appendChild(cdnScript);
             };
+            
             document.head.appendChild(socketScript);
             
             // Load models

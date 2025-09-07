@@ -92,9 +92,9 @@ def update_download_status(**kwargs):
     
     try:
         socketio.emit('download_progress', download_status.copy())
-        print(f"Progress: {download_status.get('progress', 0):.1f}% - {download_status.get('current_file', '')}")
+        print(f"✅ Emitted download_progress: {download_status.get('progress', 0):.1f}% - {download_status.get('current_file', '')}")
     except Exception as e:
-        print(f"Failed to emit progress: {e}")
+        print(f"❌ Failed to emit progress: {e}")
 
 def download_with_progress(repo_id, local_dir, allow_patterns):
     """Download with real-time progress monitoring"""
