@@ -437,7 +437,7 @@ def api_update_model():
         return jsonify({'error': 'Invalid repository ID'}), 400
 
     def update_thread():
-        update_model(repo_id, quant_pattern)
+        update_model_with_progress(repo_id, quant_pattern)
 
     threading.Thread(target=update_thread, daemon=True).start()
     return jsonify({'message': f'Update started for {repo_id}'})

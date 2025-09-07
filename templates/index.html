@@ -658,7 +658,6 @@
         
         async function updateModel(repoId) {
             try {
-                addLog(`🔄 ===== UPDATE STARTED: ${repoId} =====`, 'info');
                 const response = await fetch(buildURL('api/models/update'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -667,12 +666,13 @@
                 
                 const result = await response.json();
                 if (response.ok) {
-                    addLog(`✅ Update started for ${repoId}`, 'success');
+                    // Progress will be handled by socket events
+                    // addLog(`🔄 Update request sent for ${repoId}`, 'info');
                 } else {
-                    addLog(`❌ Update failed: ${result.error}`, 'error');
+                    addLog(`❌ Update request failed: ${result.error}`, 'error');
                 }
             } catch (error) {
-                addLog(`❌ Error updating model: ${error.message}`, 'error');
+                addLog(`❌ Error sending update request: ${error.message}`, 'error');
             }
         }
         
