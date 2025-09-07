@@ -206,9 +206,7 @@ def get_status():
     return jsonify(download_status)
 
 # MODEL MANAGER ROUTES
-@app.route('/manage')
-def model_manager():
-    return render_template('model_manager.html')
+# Removed /manage route as we now have a unified interface
 
 @app.route('/api/models')
 def api_models():
@@ -253,8 +251,7 @@ if __name__ == '__main__':
     print("\n" + "="*50)
     print("🚀 STARTING HUGGINGFACE MODEL DOWNLOADER")
     print("="*50)
-    print(f"🔥 Download Interface: http://localhost:5000{base_url}/")
-    print(f"🔍 Model Manager: http://localhost:5000{base_url}/manage")
+    print(f"🔥 Unified Interface: http://localhost:5000{base_url}/")
     print(f"💾 Models Directory: /models/")
     if base_url:
         print(f"🌍 Configured Base URL Path: {base_url}")

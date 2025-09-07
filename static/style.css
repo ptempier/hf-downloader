@@ -269,3 +269,64 @@ button:disabled {
         align-items: center;
     }
 }
+
+/* Add these styles to your existing style.css */
+
+/* Make console always visible and positioned at bottom */
+#logContainer {
+    margin-top: 2rem !important;
+    padding: 1.5rem;
+    background: #2d3748;
+    color: #e2e8f0;
+    border-radius: 8px;
+    border-left: 4px solid #667eea;
+}
+
+#logContainer h3 {
+    color: #e2e8f0;
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+}
+
+#logOutput {
+    background: #1a202c;
+    color: #e2e8f0;
+    padding: 1rem;
+    border-radius: 5px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    max-height: 250px;
+    min-height: 150px;
+    overflow-y: auto;
+    margin-bottom: 1rem;
+    white-space: pre-wrap;
+    line-height: 1.4;
+}
+
+/* Remove the hidden class behavior for log container */
+#logContainer.hidden {
+    display: block !important;
+}
+
+/* Progress bar characters styling */
+#logOutput {
+    font-feature-settings: "liga" 0; /* Disable ligatures for better ASCII art */
+}
+
+/* Style for progress lines */
+#logOutput::-webkit-scrollbar {
+    width: 6px;
+}
+
+#logOutput::-webkit-scrollbar-track {
+    background: #2d3748;
+}
+
+#logOutput::-webkit-scrollbar-thumb {
+    background: #4a5568;
+    border-radius: 3px;
+}
+
+#logOutput::-webkit-scrollbar-thumb:hover {
+    background: #667eea;
+}
