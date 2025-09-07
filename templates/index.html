@@ -3,19 +3,341 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hugging Face Model Downloader</title>
-    <link rel="stylesheet" href="{{ base_url }}/static/style.css">
-    <link rel="stylesheet" href="{{ base_url }}/static/model_manager.css">
+    <title>Hugging Face Model Manager</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            border-radius: 10px;
+            text-align: center;
+        }
+        
+        .section {
+            background: white;
+            border-radius: 10px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .section h2 {
+            color: #444;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid #eee;
+        }
+        
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102,126,234,0.1);
+        }
+        
+        .form-group small {
+            display: block;
+            margin-top: 0.5rem;
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102,126,234,0.3);
+        }
+        
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 14px;
+        }
+        
+        .btn-danger {
+            background: #dc3545;
+        }
+        
+        .btn-danger:hover {
+            background: #c82333;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            align-items: center;
+        }
+        
+        .controls input {
+            flex: 1;
+        }
+        
+        .model-card {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            transition: all 0.2s;
+        }
+        
+        .model-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        .model-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        
+        .model-path {
+            font-family: monospace;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .model-info {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .model-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        .file-group {
+            background: #e9ecef;
+            border-radius: 4px;
+            margin-top: 0.5rem;
+            overflow: hidden;
+        }
+        
+        .file-group-header {
+            padding: 0.5rem;
+            font-weight: bold;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .file-group-header:hover {
+            background: #dee2e6;
+        }
+        
+        .file-group-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+        
+        .file-group-content.expanded {
+            max-height: 500px;
+        }
+        
+        .file-item {
+            padding: 0.25rem 0.5rem;
+            border-bottom: 1px solid rgba(0,0,0,0.05);
+            display: flex;
+            justify-content: space-between;
+            font-family: monospace;
+            font-size: 0.85rem;
+        }
+        
+        .console {
+            background: #2d3748;
+            color: #e2e8f0;
+            border-radius: 8px;
+            padding: 1rem;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            white-space: pre-wrap;
+            line-height: 1.4;
+        }
+        
+        .progress-bar {
+            background: #e9ecef;
+            border-radius: 15px;
+            height: 30px;
+            margin: 1rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            height: 100%;
+            border-radius: 15px;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .progress-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .status-message {
+            padding: 0.75rem;
+            border-radius: 5px;
+            margin: 1rem 0;
+            font-weight: 500;
+        }
+        
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .status-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 2rem;
+        }
+        
+        .spinner {
+            width: 30px;
+            height: 30px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        
+        .modal-content {
+            background: white;
+            border-radius: 10px;
+            padding: 2rem;
+            max-width: 500px;
+            width: 90%;
+        }
+        
+        .modal-actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+        }
+        
+        @media (max-width: 768px) {
+            .container { padding: 10px; }
+            .section { padding: 1rem; }
+            .controls { flex-direction: column; align-items: stretch; }
+            .model-header { flex-direction: column; align-items: stretch; }
+            .model-actions { justify-content: flex-start; }
+        }
+    </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>Hugging Face Model Downloader & Manager</h1>
+            <h1>🤗 Hugging Face Model Manager</h1>
+            <p>Download, manage, and organize your AI models</p>
         </header>
         
-        <!-- Download Section (Top) -->
-        <main>
-            <h2 class="page-title">Download</h2>
+        <!-- Download Section -->
+        <div class="section">
+            <h2>📥 Download Model</h2>
             <form id="downloadForm">
                 <div class="form-group">
                     <label for="repoId">Repository ID:</label>
@@ -25,24 +347,31 @@
                 </div>
                 
                 <div class="form-group">
-                    <label for="quantPattern">Quantization Pattern (RegExp):</label>
+                    <label for="quantPattern">Quantization Pattern (Optional):</label>
                     <input type="text" id="quantPattern" name="quantPattern" 
                            placeholder="e.g., F16, Q4_K_M, .gguf">
                     <small>Leave empty to download all files. Examples: F16, Q4_K_M, .safetensors</small>
                 </div>
                 
-                <button type="submit" id="downloadBtn">Start Download</button>
+                <button type="submit" id="downloadBtn" class="btn">Start Download</button>
             </form>
-        </main>
-
-        <!-- Model Manager Section (Middle) -->
-        <main style="margin-top: 2rem;">
-            <h2 class="page-title">Model Manager</h2>
-            <div class="controls">
-                <button id="refreshBtn">🔄 Refresh Models</button>
-                <div class="search-box">
-                    <input type="text" id="searchInput" placeholder="Search models...">
+            
+            <!-- Progress Bar -->
+            <div id="progressContainer" class="hidden">
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                    <div id="progressText" class="progress-text">0%</div>
                 </div>
+                <div id="statusMessage" class="status-message"></div>
+            </div>
+        </div>
+        
+        <!-- Models Section -->
+        <div class="section">
+            <h2>📁 Model Manager</h2>
+            <div class="controls">
+                <input type="text" id="searchInput" placeholder="Search models...">
+                <button id="refreshBtn" class="btn">🔄 Refresh</button>
             </div>
             
             <div id="loadingIndicator" class="loading hidden">
@@ -53,32 +382,27 @@
             <div id="modelsContainer">
                 <!-- Models will be loaded here -->
             </div>
-            
-            <!-- Delete Confirmation Modal -->
-            <div id="deleteModal" class="modal hidden">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h3>Confirm Delete</h3>
-                        <span class="close">&times;</span>
-                    </div>
-                    <div class="modal-body">
-                        <p>Are you sure you want to delete this model?</p>
-                        <p><strong id="deleteModelName"></strong></p>
-                        <p class="warning">This action cannot be undone.</p>
-                        <div class="modal-actions">
-                            <button id="confirmDeleteBtn" class="btn-danger">Delete</button>
-                            <button id="cancelDeleteBtn">Cancel</button>
-                        </div>
-                    </div>
-                </div>
+        </div>
+        
+        <!-- Console Section -->
+        <div class="section">
+            <h2>🖥️ Console</h2>
+            <div id="console" class="console">Ready...</div>
+            <button id="clearConsole" class="btn btn-sm" style="margin-top: 1rem;">Clear Console</button>
+        </div>
+    </div>
+    
+    <!-- Delete Modal -->
+    <div id="deleteModal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Confirm Delete</h3>
+            <p>Are you sure you want to delete this model?</p>
+            <p><strong id="deleteModelName"></strong></p>
+            <p style="color: #dc3545; font-weight: 500; margin: 1rem 0;">This action cannot be undone.</p>
+            <div class="modal-actions">
+                <button id="cancelDeleteBtn" class="btn">Cancel</button>
+                <button id="confirmDeleteBtn" class="btn btn-danger">Delete</button>
             </div>
-        </main>
-
-        <!-- Console Section (Bottom) -->
-        <div id="logContainer">
-            <h3>Console</h3>
-            <div id="logOutput">Ready...</div>
-            <button id="clearLogBtn">Clear Log</button>
         </div>
     </div>
     
@@ -87,39 +411,445 @@
         window.BASE_URL = '{{ base_url }}';
     </script>
     
-    <!-- Combined script loading for both functionalities -->
+    <!-- Consolidated JavaScript -->
     <script>
-    (function(){
-        function loadScript(src, onload, onerror){
-            var s = document.createElement('script');
-            s.src = src;
-            s.async = true;
-            s.onload = onload;
-            s.onerror = onerror;
-            document.head.appendChild(s);
+        // Configuration
+        const BASE_URL = window.BASE_URL || '';
+        
+        // Socket.IO initialization
+        let socket;
+        function initializeSocket() {
+            if (typeof io !== 'undefined') {
+                const socketPath = BASE_URL ? `${BASE_URL}/socket.io` : '/socket.io';
+                socket = io({ path: socketPath });
+            } else {
+                console.warn('Socket.IO not available - real-time features disabled');
+                socket = { on: () => {}, emit: () => {}, disconnect: () => {} };
+            }
         }
+        
+        // Utility functions
+        function buildURL(path) {
+            const cleanPath = path.replace(/^\/+/, '');
+            return BASE_URL ? `${BASE_URL}/${cleanPath}` : `/${cleanPath}`;
+        }
+        
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+        
+        function createASCIIProgress(progress, width = 30) {
+            const filled = Math.round((progress / 100) * width);
+            const empty = width - filled;
+            const bar = '█'.repeat(filled) + '░'.repeat(empty);
+            return `[${bar}] ${Math.round(progress)}%`;
+        }
+        
+        // Console management
+        const consoleLogs = [];
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `[${timestamp}] ${message}`;
+            consoleLogs.push(logEntry);
+            document.getElementById('console').textContent = consoleLogs.join('\n');
+            document.getElementById('console').scrollTop = document.getElementById('console').scrollHeight;
+        }
+        
+        function addProgressLog(message, progress = null) {
+            const timestamp = new Date().toLocaleTimeString();
+            let logEntry = `[${timestamp}] ${message}`;
+            if (progress !== null) {
+                logEntry += ` ${createASCIIProgress(progress)}`;
+            }
+            
+            if (consoleLogs.length > 0 && consoleLogs[consoleLogs.length - 1].includes('█')) {
+                consoleLogs[consoleLogs.length - 1] = logEntry;
+            } else {
+                consoleLogs.push(logEntry);
+            }
+            
+            document.getElementById('console').textContent = consoleLogs.join('\n');
+            document.getElementById('console').scrollTop = document.getElementById('console').scrollHeight;
+        }
+        
+        // Download management
+        let isDownloading = false;
+        
+        function updateProgressUI(progress, status, message = '') {
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            const statusMessage = document.getElementById('statusMessage');
+            const progressContainer = document.getElementById('progressContainer');
+            
+            if (status === 'downloading' || status === 'starting') {
+                progressContainer.classList.remove('hidden');
+            }
+            
+            progressFill.style.width = `${progress}%`;
+            progressText.textContent = `${Math.round(progress)}%`;
+            statusMessage.textContent = message;
+            statusMessage.className = 'status-message';
+            
+            if (status === 'completed') {
+                statusMessage.classList.add('status-success');
+                addLog(`✅ ${message}`, 'success');
+                setTimeout(() => {
+                    resetDownloadUI();
+                    loadModels();
+                }, 3000);
+            } else if (status === 'error') {
+                statusMessage.classList.add('status-error');
+                addLog(`❌ ${message}`, 'error');
+                resetDownloadUI();
+            } else if (status === 'downloading') {
+                statusMessage.classList.add('status-info');
+            }
+        }
+        
+        function resetDownloadUI() {
+            isDownloading = false;
+            document.getElementById('downloadBtn').disabled = false;
+            document.getElementById('downloadBtn').textContent = 'Start Download';
+        }
+        
+        function startDownloadUI() {
+            isDownloading = true;
+            document.getElementById('downloadBtn').disabled = true;
+            document.getElementById('downloadBtn').textContent = 'Downloading...';
+            addLog('🚀 ===== DOWNLOAD STARTED =====', 'info');
+        }
+        
+        // Model management
+        let allModels = [];
+        let currentModelToDelete = null;
+        
+        function showLoading() {
+            document.getElementById('loadingIndicator').classList.remove('hidden');
+            document.getElementById('modelsContainer').innerHTML = '';
+        }
+        
+        function hideLoading() {
+            document.getElementById('loadingIndicator').classList.add('hidden');
+        }
+        
+        function createFileGroupHTML(group) {
+            const filesHTML = group.files.map((file, idx) => `
+                <div class="file-item">
+                    <span>${file.name}</span>
+                    <span>${idx + 1}. ${file.size} - ${file.date || ''}</span>
+                </div>
+            `).join('');
 
-        var baseUrl = '{{ base_url }}';
-        var serverSocketPath = baseUrl ? baseUrl + '/socket.io/socket.io.js' : '/socket.io/socket.io.js';
-        var cdnSrc = 'https://cdn.socket.io/4.5.4/socket.io.min.js';
-        var appSrc = baseUrl ? baseUrl + '/static/unified_script.js' : '/static/unified_script.js';
+            return `
+                <div class="file-group">
+                    <div class="file-group-header" onclick="toggleFileGroup(this)">
+                        <span>${group.name} (${group.count} files - ${group.size})</span>
+                        <span class="toggle-icon">▶</span>
+                    </div>
+                    <div class="file-group-content">
+                        ${filesHTML}
+                    </div>
+                </div>
+            `;
+        }
+        
+        function createModelHTML(model) {
+            const groupsHTML = model.groups.map(createFileGroupHTML).join('');
+            let individualFilesHTML = '';
+            
+            if (model.individual_files && model.individual_files.length > 0) {
+                const items = model.individual_files.map((f, i) => `
+                    <div class="file-item">
+                        <span>${f.name}</span>
+                        <span>${i + 1}. ${f.size} - ${f.date || ''}</span>
+                    </div>
+                `).join('');
+                individualFilesHTML = `<div class="file-group"><div class="file-group-content expanded">${items}</div></div>`;
+            }
+            
+            const groupsTotal = model.groups ? model.groups.reduce((s, g) => s + (g.count || 0), 0) : 0;
+            const individualTotal = model.individual_files ? model.individual_files.length : 0;
+            const modelFileCount = groupsTotal + individualTotal;
+            
+            return `
+                <div class="model-card" data-model-name="${model.name.toLowerCase()}">
+                    <div class="model-header">
+                        <div>
+                            <div class="model-path">${model.path}</div>
+                            <div class="model-info">${modelFileCount} files - ${model.total_size}</div>
+                        </div>
+                        <div class="model-actions">
+                            <button class="btn btn-sm" onclick="updateModel('${model.name}')" title="Update Model">↻ Update</button>
+                            <button class="btn btn-sm btn-danger" onclick="showDeleteModal('${model.name}', '${model.path}')" title="Delete Model">🗑 Delete</button>
+                        </div>
+                    </div>
+                    <div class="model-files">
+                        ${groupsHTML}
+                        ${individualFilesHTML}
+                    </div>
+                </div>
+            `;
+        }
+        
+        function toggleFileGroup(header) {
+            const content = header.nextElementSibling;
+            const icon = header.querySelector('.toggle-icon');
+            
+            if (content.classList.contains('expanded')) {
+                content.classList.remove('expanded');
+                icon.textContent = '▶';
+            } else {
+                content.classList.add('expanded');
+                icon.textContent = '▼';
+            }
+        }
+        
+        function renderModels(models) {
+            const container = document.getElementById('modelsContainer');
+            
+            if (models.length === 0) {
+                container.innerHTML = `
+                    <div class="loading">
+                        <h3>🔍 No Models Found</h3>
+                        <p>No models found in /models/ directory.</p>
+                        <p>Download some models first using the form above.</p>
+                    </div>
+                `;
+                return;
+            }
 
-        loadScript(serverSocketPath, function(){
-            loadScript(appSrc);
-        }, function(){
-            console.warn('Server socket.io client failed, falling back to CDN');
-            loadScript(cdnSrc, function(){
-                loadScript(appSrc, function(){
-                    if (typeof initializeSocket === 'function') {
-                        initializeSocket();
-                    }
-                });
-            }, function(){
-                console.warn('CDN socket.io client failed; real-time disabled');
-                loadScript(appSrc);
+            const modelsHTML = models.map(createModelHTML).join('');
+            container.innerHTML = modelsHTML;
+        }
+        
+        function filterModels() {
+            const query = document.getElementById('searchInput').value.toLowerCase().trim();
+            const modelCards = document.querySelectorAll('.model-card');
+            
+            modelCards.forEach(card => {
+                const modelName = card.dataset.modelName;
+                const isVisible = !query || modelName.includes(query);
+                card.style.display = isVisible ? 'block' : 'none';
             });
+        }
+        
+        // API functions
+        async function loadModels() {
+            showLoading();
+            addLog('🔍 Loading models...', 'info');
+            try {
+                const response = await fetch(buildURL('api/models'));
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const models = await response.json();
+                allModels = models;
+                renderModels(models);
+                hideLoading();
+                addLog(`✅ Loaded ${models.length} models`, 'success');
+            } catch (error) {
+                hideLoading();
+                addLog(`❌ Failed to load models: ${error.message}`, 'error');
+            }
+        }
+        
+        async function updateModel(repoId) {
+            try {
+                addLog(`🔄 ===== UPDATE STARTED: ${repoId} =====`, 'info');
+                const response = await fetch(buildURL('api/models/update'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ repo_id: repoId })
+                });
+                
+                const result = await response.json();
+                if (response.ok) {
+                    addLog(`✅ Update started for ${repoId}`, 'success');
+                } else {
+                    addLog(`❌ Update failed: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                addLog(`❌ Error updating model: ${error.message}`, 'error');
+            }
+        }
+        
+        function showDeleteModal(modelName, modelPath) {
+            currentModelToDelete = { name: modelName, path: modelPath };
+            document.getElementById('deleteModelName').textContent = modelName;
+            document.getElementById('deleteModal').classList.remove('hidden');
+        }
+        
+        function hideDeleteModal() {
+            document.getElementById('deleteModal').classList.add('hidden');
+            currentModelToDelete = null;
+        }
+        
+        async function confirmDelete() {
+            if (!currentModelToDelete) return;
+            
+            try {
+                addLog(`🗑️ ===== DELETE STARTED: ${currentModelToDelete.name} =====`, 'info');
+                const response = await fetch(buildURL('api/models/delete'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: currentModelToDelete.path })
+                });
+                
+                const result = await response.json();
+                if (response.ok) {
+                    addLog(`✅ Model deleted: ${currentModelToDelete.name}`, 'success');
+                    addLog(`===== DELETE COMPLETED =====`, 'success');
+                    hideDeleteModal();
+                    loadModels();
+                } else {
+                    addLog(`❌ Delete failed: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                addLog(`❌ Error deleting model: ${error.message}`, 'error');
+            }
+        }
+        
+        // Event listeners
+        document.getElementById('downloadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (isDownloading) return;
+
+            const formData = new FormData(e.target);
+            const data = {
+                repo_id: formData.get('repoId').trim(),
+                quant_pattern: formData.get('quantPattern').trim()
+            };
+
+            if (!data.repo_id) {
+                alert('Please enter a repository ID');
+                return;
+            }
+
+            if (!data.repo_id.includes('/')) {
+                alert('Repository ID should be in format: username/model-name');
+                return;
+            }
+
+            try {
+                startDownloadUI();
+                const response = await fetch(buildURL('download'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || 'Download failed');
+
+                addLog(`📋 Download request sent for: ${data.repo_id}`, 'info');
+                if (data.quant_pattern) addLog(`🔍 Pattern filter: ${data.quant_pattern}`, 'info');
+
+            } catch (error) {
+                addLog(`❌ Error: ${error.message}`, 'error');
+                resetDownloadUI();
+            }
         });
-    })();
+        
+        document.getElementById('refreshBtn').addEventListener('click', loadModels);
+        document.getElementById('searchInput').addEventListener('input', filterModels);
+        document.getElementById('confirmDeleteBtn').addEventListener('click', confirmDelete);
+        document.getElementById('cancelDeleteBtn').addEventListener('click', hideDeleteModal);
+        document.getElementById('clearConsole').addEventListener('click', () => {
+            consoleLogs.length = 0;
+            document.getElementById('console').textContent = 'Ready...';
+        });
+        
+        // Modal close handlers
+        document.getElementById('deleteModal').addEventListener('click', (e) => {
+            if (e.target.id === 'deleteModal') hideDeleteModal();
+        });
+        
+        // Form validation
+        document.getElementById('repoId').addEventListener('input', (e) => {
+            const value = e.target.value;
+            const isValid = value.includes('/') && value.trim().length > 0;
+            e.target.style.borderColor = (!value || isValid) ? '#ddd' : '#dc3545';
+        });
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') hideDeleteModal();
+            if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+                e.preventDefault();
+                loadModels();
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                if (!isDownloading) document.getElementById('downloadForm').dispatchEvent(new Event('submit'));
+            }
+        });
+        
+        // Socket.IO event handlers
+        function setupSocketHandlers() {
+            socket.on('connect', () => addLog('🔌 Connected to server', 'info'));
+            socket.on('disconnect', () => {
+                addLog('🔌 Disconnected from server', 'info');
+                if (isDownloading) {
+                    addLog('❌ Connection lost during download', 'error');
+                    resetDownloadUI();
+                }
+            });
+
+            socket.on('download_progress', (data) => {
+                const { progress, status, message } = data;
+                
+                if (status === 'completed') {
+                    updateProgressUI(progress, status, message);
+                    addLog('===== DOWNLOAD COMPLETED =====', 'success');
+                } else if (status === 'error') {
+                    updateProgressUI(progress, status, message);
+                    addLog('===== DOWNLOAD FAILED =====', 'error');
+                } else if (status === 'downloading') {
+                    updateProgressUI(progress || 0, status, message);
+                    if (progress !== undefined) {
+                        addProgressLog(`🔥 ${message}`, progress);
+                    } else {
+                        addLog(`🔥 ${message}`, 'info');
+                    }
+                }
+            });
+        }
+        
+        // Initialize application
+        function init() {
+            // Try to load Socket.IO and initialize
+            const socketScript = document.createElement('script');
+            const serverPath = BASE_URL ? `${BASE_URL}/socket.io/socket.io.js` : '/socket.io/socket.io.js';
+            const cdnPath = 'https://cdn.socket.io/4.5.4/socket.io.min.js';
+            
+            socketScript.src = serverPath;
+            socketScript.onload = () => {
+                initializeSocket();
+                setupSocketHandlers();
+            };
+            socketScript.onerror = () => {
+                console.warn('Server Socket.IO failed, trying CDN');
+                const cdnScript = document.createElement('script');
+                cdnScript.src = cdnPath;
+                cdnScript.onload = () => {
+                    initializeSocket();
+                    setupSocketHandlers();
+                };
+                cdnScript.onerror = () => {
+                    console.warn('Socket.IO unavailable - real-time features disabled');
+                };
+                document.head.appendChild(cdnScript);
+            };
+            document.head.appendChild(socketScript);
+            
+            // Load models
+            loadModels();
+            addLog('🚀 Application ready', 'info');
+        }
+        
+        // Start when page loads
+        window.addEventListener('load', init);
     </script>
 </body>
 </html>
