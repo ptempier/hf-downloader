@@ -25,7 +25,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY *.py ./
 COPY templates/ ./templates/
-COPY static/ ./static/
+#COPY static/ ./static/
 
 # Create models directory
 RUN mkdir -p /models && chmod 755 /models
