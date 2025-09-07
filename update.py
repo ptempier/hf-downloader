@@ -41,11 +41,13 @@ def update_model_task(repo_id, quant_pattern=""):
         
         print(f"Updating model to: {local_dir}")
         
+        # FIXED: Force actual files instead of symlinks
         snapshot_download(
             repo_id=repo_id,
             local_dir=local_dir,
             allow_patterns=allow_patterns,
-            resume_download=True
+            resume_download=True,
+            local_dir_use_symlinks=False  # This is the key fix!
         )
         
         print(f"✅ Model {repo_id} updated successfully")

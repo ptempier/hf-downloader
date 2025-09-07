@@ -86,22 +86,20 @@ def download_model(repo_id, quant_pattern):
             'message': f'Starting download of {repo_id}'
         })
 
-        # Perform the snapshot download; snapshot_download does not provide fine-grained
-        # progress callbacks here, so emit coarse updates before and after.
-        # Run snapshot_download in an isolated subprocess to avoid recursion or
-        # interpreter-level issues (some environments may cause unexpected
-        # RecursionError inside the same process). We serialize args via JSON.
+        # FIXED: Force actual files instead of symlinks by setting local_dir_use_symlinks=False
         child_args = json.dumps({
             'repo_id': repo_id,
             'local_dir': local_dir,
-            'allow_patterns': allow_patterns
+            'allow_patterns': allow_patterns,
+            'local_dir_use_symlinks': False  # This is the key fix!
         })
 
         child_cmd = [sys.executable, '-u', '-c',
             'import sys, json; from huggingface_hub import snapshot_download;\n'
             'args = json.loads(sys.argv[1]);\n'
             'snapshot_download(repo_id=args["repo_id"], local_dir=args["local_dir"], '
-            'allow_patterns=args.get("allow_patterns"), resume_download=True)\n',
+            'allow_patterns=args.get("allow_patterns"), resume_download=True, '
+            'local_dir_use_symlinks=args.get("local_dir_use_symlinks", True))\n',
             child_args
         ]
 

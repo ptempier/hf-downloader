@@ -180,11 +180,13 @@ def update_model_func(repo_id, quant_pattern=""):
         else:
             allow_patterns = None
         
+        # FIXED: Force actual files instead of symlinks
         snapshot_download(
             repo_id=repo_id,
             local_dir=local_dir,
             allow_patterns=allow_patterns,
-            resume_download=True
+            resume_download=True,
+            local_dir_use_symlinks=False  # This is the key fix!
         )
         
         return True, "Model updated successfully"
