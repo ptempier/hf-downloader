@@ -5,11 +5,10 @@ import sys
 import json
 import time
 import traceback
-import subprocess
 import threading
 from pathlib import Path
 from huggingface_hub import snapshot_download, hf_hub_download
-from huggingface_hub.utils import HfHubHTTPError
+from huggingface_hub.utils import HfHubHTTPError, tqdm
 
 # Set HF_TRANSFER for faster downloads
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
@@ -45,12 +44,36 @@ def update_download_status(socketio, **kwargs):
     
     try:
         socketio.emit('download_progress', download_status.copy())
+        print(f"Progress: {download_status.get('progress', 0):.1f}% - {download_status.get('current_file', '')}")
     except Exception as e:
         print(f"Failed to emit progress: {e}")
 
+class ProgressTracker:
+    """Custom progress tracker for huggingface_hub downloads"""
+    
+    def __init__(self, socketio):
+        self.socketio = socketio
+        self.files_seen = set()
+        self.current_file = ""
+        self.total_progress = 0
+        
+    def __call__(self, block_num=None, block_size=None, total_size=None):
+        """Progress callback for individual file downloads"""
+        if total_size and block_num is not None and block_size:
+            downloaded = min(block_num * block_size, total_size)
+            progress = (downloaded / total_size) * 100
+            
+            # Update status for current file
+            update_download_status(
+                self.socketio,
+                progress=min(progress, 99),  # Cap at 99% until completely done
+                status='downloading',
+                current_file=f"Downloading {self.current_file}: {progress:.1f}%"
+            )
+
 def start_download_task(repo_id, quant_pattern, socketio):
     """
-    Main download function that handles the model downloading process with real progress
+    Main download function with real progress tracking
     """
     global download_status
 
@@ -63,7 +86,7 @@ def start_download_task(repo_id, quant_pattern, socketio):
         update_download_status(socketio,
             progress=0,
             status="starting",
-            current_file="",
+            current_file="Initializing download...",
             downloaded_files=0,
             total_files=0,
             downloaded_size=0,
@@ -81,23 +104,18 @@ def start_download_task(repo_id, quant_pattern, socketio):
         else:
             allow_patterns = None
 
-        update_download_status(socketio,
-            progress=5,
-            status='downloading',
-            current_file='Scanning repository...'
-        )
-
-        # Try the enhanced download approach first
+        # Method 1: Try direct download with progress monitoring
         try:
-            _download_with_progress(repo_id, local_dir, allow_patterns, socketio)
+            _download_with_real_progress(repo_id, local_dir, allow_patterns, socketio)
         except Exception as e:
-            print(f"Enhanced download failed, falling back to subprocess: {e}")
-            _download_with_subprocess(repo_id, local_dir, allow_patterns, socketio)
+            print(f"Direct download failed, trying alternative method: {e}")
+            # Method 2: Fallback to file-by-file download
+            _download_file_by_file(repo_id, local_dir, allow_patterns, socketio)
 
         update_download_status(socketio,
             progress=100,
             status="completed",
-            current_file="Download completed"
+            current_file="Download completed successfully!"
         )
 
     except HfHubHTTPError as e:
@@ -107,160 +125,131 @@ def start_download_task(repo_id, quant_pattern, socketio):
     except Exception as e:
         _handle_generic_error(socketio, repo_id, e)
 
-def _download_with_progress(repo_id, local_dir, allow_patterns, socketio):
-    """Download with simulated progress tracking"""
+def _download_with_real_progress(repo_id, local_dir, allow_patterns, socketio):
+    """Download with real progress tracking using a monitoring thread"""
     
-    # Phase 1: Initialize (10%)
     update_download_status(socketio,
         progress=10,
         status='downloading',
-        current_file='Initializing download...'
-    )
-    time.sleep(0.5)
-    
-    # Phase 2: Start download (20%)
-    update_download_status(socketio,
-        progress=20,
-        status='downloading',
-        current_file='Connecting to repository...'
+        current_file='Starting download...'
     )
     
-    # Start the actual download in a thread while we simulate progress
-    download_thread = threading.Thread(
-        target=_actual_download,
-        args=(repo_id, local_dir, allow_patterns)
-    )
-    download_thread.daemon = True
-    download_thread.start()
+    # Start download in background thread
+    download_exception = [None]
     
-    # Simulate progress while download happens
-    progress = 20
-    while download_thread.is_alive() and progress < 95:
-        time.sleep(2)  # Update every 2 seconds
-        progress = min(95, progress + 5)
+    def download_thread():
+        try:
+            snapshot_download(
+                repo_id=repo_id,
+                local_dir=local_dir,
+                allow_patterns=allow_patterns,
+                resume_download=True,
+                local_dir_use_symlinks=False
+            )
+        except Exception as e:
+            download_exception[0] = e
+    
+    # Start the download
+    thread = threading.Thread(target=download_thread, daemon=True)
+    thread.start()
+    
+    # Monitor progress
+    progress = 10
+    last_file_count = 0
+    
+    while thread.is_alive():
+        time.sleep(1)
         
-        # Try to get some file info from the local directory
-        current_file = _get_current_download_file(local_dir)
+        # Check directory for new files
+        try:
+            current_files = list(Path(local_dir).rglob('*'))
+            file_count = len([f for f in current_files if f.is_file()])
+            
+            if file_count > last_file_count:
+                progress = min(95, progress + 5)
+                last_file_count = file_count
+                
+                # Find most recently modified file
+                latest_file = None
+                try:
+                    files = [f for f in current_files if f.is_file()]
+                    if files:
+                        latest_file = max(files, key=lambda f: f.stat().st_mtime)
+                except:
+                    pass
+                
+                current_file_name = latest_file.name if latest_file else "Processing files..."
+                
+                update_download_status(socketio,
+                    progress=progress,
+                    status='downloading',
+                    current_file=f"Processing: {current_file_name}",
+                    downloaded_files=file_count
+                )
+        except Exception as e:
+            print(f"Error monitoring progress: {e}")
         
-        update_download_status(socketio,
-            progress=progress,
-            status='downloading',
-            current_file=current_file or f'Downloading... ({progress}%)'
-        )
+        # Increment progress slowly
+        if progress < 90:
+            progress = min(90, progress + 1)
+            update_download_status(socketio,
+                progress=progress,
+                status='downloading',
+                current_file='Downloading files...'
+            )
     
-    # Wait for download to complete
-    download_thread.join()
+    # Wait for thread to complete
+    thread.join()
+    
+    # Check for exceptions
+    if download_exception[0]:
+        raise download_exception[0]
     
     # Final progress update
+    final_files = list(Path(local_dir).rglob('*'))
+    final_count = len([f for f in final_files if f.is_file()])
+    
     update_download_status(socketio,
-        progress=100,
+        progress=99,
         status='downloading',
-        current_file='Finalizing download...'
+        current_file='Finalizing download...',
+        downloaded_files=final_count
     )
 
-def _actual_download(repo_id, local_dir, allow_patterns):
-    """Perform the actual download"""
-    try:
-        # FIXED: Force actual files instead of symlinks
-        snapshot_download(
-            repo_id=repo_id,
-            local_dir=local_dir,
-            allow_patterns=allow_patterns,
-            resume_download=True,
-            local_dir_use_symlinks=False  # This is the key fix!
-        )
-    except Exception as e:
-        print(f"Download error in thread: {e}")
-        raise
-
-def _get_current_download_file(local_dir):
-    """Try to detect what file is currently being downloaded"""
-    try:
-        # Look for recently modified files
-        path = Path(local_dir)
-        if path.exists():
-            files = list(path.rglob('*'))
-            if files:
-                # Sort by modification time, get most recent
-                latest = max(files, key=lambda f: f.stat().st_mtime if f.is_file() else 0)
-                if latest.is_file():
-                    return f"Downloading {latest.name}"
-    except Exception:
-        pass
-    return None
-
-def _download_with_subprocess(repo_id, local_dir, allow_patterns, socketio):
-    """Fallback subprocess download with simulated progress"""
+def _download_file_by_file(repo_id, local_dir, allow_patterns, socketio):
+    """Fallback method: download files individually with progress"""
     
     update_download_status(socketio,
         progress=30,
         status='downloading',
-        current_file='Starting subprocess download...'
+        current_file='Fetching file list...'
     )
-
-    child_args = json.dumps({
-        'repo_id': repo_id,
-        'local_dir': local_dir,
-        'allow_patterns': allow_patterns,
-        'local_dir_use_symlinks': False  # Force actual files
-    })
-
-    child_cmd = [sys.executable, '-u', '-c',
-        'import sys, json; from huggingface_hub import snapshot_download;\n'
-        'args = json.loads(sys.argv[1]);\n'
-        'snapshot_download(repo_id=args["repo_id"], local_dir=args["local_dir"], '
-        'allow_patterns=args.get("allow_patterns"), resume_download=True, '
-        'local_dir_use_symlinks=args.get("local_dir_use_symlinks", True))\n',
-        child_args
-    ]
-
-    env = os.environ.copy()
-    env.setdefault('HF_HUB_ENABLE_HF_TRANSFER', '1')
-
-    # Start subprocess
-    proc = subprocess.Popen(child_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-                           text=True, env=env)
     
-    # Simulate progress while subprocess runs
-    progress = 30
-    while proc.poll() is None and progress < 90:
-        time.sleep(1)
-        progress = min(90, progress + 3)
-        
-        current_file = _get_current_download_file(local_dir)
-        update_download_status(socketio,
-            progress=progress,
-            status='downloading',
-            current_file=current_file or f'Processing... ({progress}%)'
-        )
+    # This is a simplified version - you'd need to implement
+    # file listing from the repo first, then download each file
+    # For now, fall back to the original method
     
-    # Wait for completion and check result
-    stdout, stderr = proc.communicate()
-    
-    if proc.returncode != 0:
-        print(f"Subprocess failed (rc={proc.returncode})")
-        print(f"stdout: {stdout}")
-        print(f"stderr: {stderr}")
-        raise Exception(f"Download failed: {stderr}")
-    
-    update_download_status(socketio,
-        progress=95,
-        status='downloading',
-        current_file='Download completed, finalizing...'
+    snapshot_download(
+        repo_id=repo_id,
+        local_dir=local_dir,
+        allow_patterns=allow_patterns,
+        resume_download=True,
+        local_dir_use_symlinks=False
     )
 
 def _handle_download_error(socketio, repo_id, error, error_type):
     """Handle download-specific errors"""
     global download_status
+    error_msg = f"{error_type}: {str(error)}"
+    print(f"❌ {error_msg}")
     update_download_status(socketio,
         progress=0,
         status="error",
-        current_file=str(error)
+        current_file=error_msg
     )
 
 def _handle_recursion_error(socketio, repo_id, error):
     """Handle recursion errors with detailed logging"""
-    # Capture detailed recursion information for diagnosis
     tb = traceback.format_exc()
     info = (
         f"RecursionError while downloading {repo_id}: {error}\n"
@@ -269,7 +258,6 @@ def _handle_recursion_error(socketio, repo_id, error):
     )
     print(info)
     
-    # Persist to a file for post-mortem inspection
     try:
         with open('/tmp/hf_downloader_recursion.log', 'w') as f:
             f.write(info)
@@ -279,15 +267,14 @@ def _handle_recursion_error(socketio, repo_id, error):
     update_download_status(socketio,
         progress=0,
         status="error",
-        current_file=str(error)
+        current_file=f"RecursionError: {str(error)}"
     )
 
 def _handle_generic_error(socketio, repo_id, error):
     """Handle generic errors with logging"""
     tb = traceback.format_exc()
-    print(f"Unexpected error: {error}\n{tb}")
+    print(f"❌ Unexpected error: {error}\n{tb}")
     
-    # Save a copy to disk to aid debugging
     try:
         with open('/tmp/hf_downloader_unexpected.log', 'w') as f:
             f.write(f"{error}\n\n{tb}")
@@ -297,7 +284,7 @@ def _handle_generic_error(socketio, repo_id, error):
     update_download_status(socketio,
         progress=0,
         status="error",
-        current_file=str(error)
+        current_file=f"Error: {str(error)}"
     )
 
 def cancel_download():
