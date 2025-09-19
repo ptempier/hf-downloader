@@ -416,16 +416,84 @@
         // Configuration
         const BASE_URL = window.BASE_URL || '';
         
-        // Socket.IO initialization
+        // Socket.IO initialization with better connection handling
         let socket;
+        let pollInterval = null;
+        let isPollingFallback = false;
+        
         function initializeSocket() {
             if (typeof io !== 'undefined') {
                 const socketPath = BASE_URL ? `${BASE_URL}/socket.io` : '/socket.io';
                 console.log(`🔌 Initializing Socket.IO with path: ${socketPath}`);
-                socket = io({ path: socketPath });
+                
+                socket = io({ 
+                    path: socketPath,
+                    transports: ['websocket', 'polling'],
+                    timeout: 20000,
+                    reconnection: true,
+                    reconnectionDelay: 1000,
+                    reconnectionAttempts: 10,
+                    maxReconnectionAttempts: 10
+                });
             } else {
-                console.warn('Socket.IO not available - real-time features disabled');
-                socket = { on: () => {}, emit: () => {}, disconnect: () => {} };
+                console.warn('Socket.IO not available - using polling fallback');
+                initPollingFallback();
+            }
+        }
+        
+        function initPollingFallback() {
+            isPollingFallback = true;
+            socket = { 
+                on: () => {}, 
+                emit: (event, data) => {
+                    if (event === 'request_status') pollDownloadStatus();
+                }, 
+                disconnect: () => {
+                    if (pollInterval) {
+                        clearInterval(pollInterval);
+                        pollInterval = null;
+                    }
+                }
+            };
+            
+            // Start polling for download status if downloading
+            if (isDownloading) {
+                startPollingFallback();
+            }
+        }
+        
+        function startPollingFallback() {
+            if (pollInterval) clearInterval(pollInterval);
+            
+            pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(buildURL('api/download/status'));
+                    if (response.ok) {
+                        const data = await response.json();
+                        handleDownloadProgress(data);
+                    }
+                } catch (error) {
+                    console.warn('Polling failed:', error);
+                }
+            }, 2000); // Poll every 2 seconds
+        }
+        
+        function stopPollingFallback() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        }
+        
+        async function pollDownloadStatus() {
+            try {
+                const response = await fetch(buildURL('api/download/status'));
+                if (response.ok) {
+                    const data = await response.json();
+                    handleDownloadProgress(data);
+                }
+            } catch (error) {
+                console.warn('Status poll failed:', error);
             }
         }
         
@@ -477,8 +545,40 @@
             document.getElementById('console').scrollTop = document.getElementById('console').scrollHeight;
         }
         
-        // Download management
+        // Download management with fallback support
         let isDownloading = false;
+        
+        function handleDownloadProgress(data) {
+            const { progress, status, current_file } = data;
+            
+            if (status === 'completed') {
+                updateProgressUI(progress, status, current_file);
+                addLog('===== DOWNLOAD COMPLETED =====', 'success');
+                stopPollingFallback();
+                isDownloading = false;
+            } else if (status === 'error') {
+                updateProgressUI(progress, status, current_file);
+                addLog('===== DOWNLOAD FAILED =====', 'error');
+                stopPollingFallback();
+                isDownloading = false;
+            } else if (status === 'downloading' || status === 'starting') {
+                updateProgressUI(progress || 0, status, current_file);
+                if (progress !== undefined && current_file) {
+                    addProgressLog(`🔥 ${current_file}`, progress);
+                } else if (current_file) {
+                    addLog(`🔥 ${current_file}`, 'info');
+                }
+                
+                // If we're downloading and not using Socket.IO, ensure polling is active
+                if (isPollingFallback && !pollInterval) {
+                    startPollingFallback();
+                }
+            } else if (status === 'idle' && isDownloading) {
+                // Download finished
+                isDownloading = false;
+                stopPollingFallback();
+            }
+        }
         
         function updateProgressUI(progress, status, message = '') {
             const progressFill = document.getElementById('progressFill');
@@ -506,13 +606,14 @@
                 statusMessage.classList.add('status-error');
                 addLog(`❌ ${message}`, 'error');
                 resetDownloadUI();
-            } else if (status === 'downloading') {
+            } else if (status === 'downloading' || status === 'starting') {
                 statusMessage.classList.add('status-info');
             }
         }
         
         function resetDownloadUI() {
             isDownloading = false;
+            stopPollingFallback();
             document.getElementById('downloadBtn').disabled = false;
             document.getElementById('downloadBtn').textContent = 'Start Download';
         }
@@ -522,6 +623,11 @@
             document.getElementById('downloadBtn').disabled = true;
             document.getElementById('downloadBtn').textContent = 'Downloading...';
             addLog('🚀 ===== DOWNLOAD STARTED =====', 'info');
+            
+            // Start polling fallback immediately for large downloads
+            if (isPollingFallback) {
+                startPollingFallback();
+            }
         }
         
         // Model management
@@ -786,38 +892,49 @@
             }
         });
         
-        // Socket.IO event handlers
+        // Socket.IO event handlers with reconnection support
         function setupSocketHandlers() {
-            socket.on('connect', () => addLog('🔌 Connected to server', 'info'));
-            socket.on('disconnect', () => {
-                addLog('🔌 Disconnected from server', 'info');
+            socket.on('connect', () => {
+                addLog('🔌 Connected to server', 'info');
+                stopPollingFallback(); // Stop polling since we have Socket.IO
+                
+                // Request current status when reconnecting
                 if (isDownloading) {
-                    addLog('❌ Connection lost during download', 'error');
-                    resetDownloadUI();
+                    socket.emit('request_status');
+                }
+            });
+            
+            socket.on('disconnect', (reason) => {
+                addLog(`🔌 Disconnected from server: ${reason}`, 'warning');
+                
+                // Start polling fallback if we're downloading
+                if (isDownloading) {
+                    addLog('📡 Switching to polling mode...', 'info');
+                    startPollingFallback();
+                }
+            });
+            
+            socket.on('reconnect', (attemptNumber) => {
+                addLog(`🔌 Reconnected after ${attemptNumber} attempts`, 'success');
+                stopPollingFallback();
+                
+                // Request current status after reconnection
+                if (isDownloading) {
+                    socket.emit('request_status');
+                }
+            });
+            
+            socket.on('reconnect_error', (error) => {
+                console.warn('Reconnection failed:', error);
+                if (isDownloading && !pollInterval) {
+                    startPollingFallback();
                 }
             });
 
-            socket.on('download_progress', (data) => {
-                const { progress, status, current_file } = data;
-                
-                if (status === 'completed') {
-                    updateProgressUI(progress, status, current_file);
-                    addLog('===== DOWNLOAD COMPLETED =====', 'success');
-                } else if (status === 'error') {
-                    updateProgressUI(progress, status, current_file);
-                    addLog('===== DOWNLOAD FAILED =====', 'error');
-                } else if (status === 'downloading') {
-                    updateProgressUI(progress || 0, status, current_file);
-                    if (progress !== undefined) {
-                        addProgressLog(`🔥 ${current_file}`, progress);
-                    } else {
-                        addLog(`🔥 ${current_file}`, 'info');
-                    }
-                }
-            });
+            socket.on('download_progress', handleDownloadProgress);
         }
         
-        // Initialize application
+        // Initialize application with better fallback handling
         function init() {
             console.log(`🚀 Initializing app with BASE_URL: "${BASE_URL}"`);
             console.log(`🔍 Expected Socket.IO path: ${BASE_URL ? `${BASE_URL}/socket.io` : '/socket.io'}`);
@@ -848,10 +965,9 @@
                 };
                 
                 cdnScript.onerror = () => {
-                    console.error('❌ Both server and CDN Socket.IO failed');
-                    addLog('❌ Socket.IO unavailable - real-time features disabled', 'error');
-                    // Initialize with dummy socket
-                    socket = { on: () => {}, emit: () => {}, disconnect: () => {} };
+                    console.error('❌ Both server and CDN Socket.IO failed, using polling mode');
+                    addLog('⚠️ Socket.IO unavailable - using polling fallback', 'warning');
+                    initPollingFallback();
                 };
                 
                 document.head.appendChild(cdnScript);
@@ -859,9 +975,35 @@
             
             document.head.appendChild(socketScript);
             
-            // Load models
+            // Load models and check for ongoing downloads
             loadModels();
+            checkOngoingDownload();
             addLog('🚀 Application ready', 'info');
+        }
+        
+        // Check if there's an ongoing download when app starts
+        async function checkOngoingDownload() {
+            try {
+                const response = await fetch(buildURL('api/download/status'));
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.status === 'downloading' || data.status === 'starting') {
+                        isDownloading = true;
+                        document.getElementById('downloadBtn').disabled = true;
+                        document.getElementById('downloadBtn').textContent = 'Downloading...';
+                        addLog('🔄 Detected ongoing download, resuming monitoring...', 'info');
+                        
+                        // Start appropriate monitoring
+                        if (isPollingFallback) {
+                            startPollingFallback();
+                        }
+                        
+                        handleDownloadProgress(data);
+                    }
+                }
+            } catch (error) {
+                console.warn('Failed to check ongoing download:', error);
+            }
         }
         
         // Start when page loads

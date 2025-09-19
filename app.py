@@ -164,10 +164,18 @@ def update_download_status(**kwargs):
             download_status['eta'] = eta
     
     try:
-        socketio.emit('download_progress', download_status.copy())
+        # Emit to all connected clients with resilience
+        socketio.emit('download_progress', download_status.copy(), broadcast=True)
         print(f"Progress: {download_status.get('progress', 0):.1f}% - {download_status.get('current_file', '')}")
     except Exception as e:
-        print(f"Failed to emit progress: {e}")
+        # Continue silently on connection errors during downloads
+        print(f"Socket emission failed (client may have disconnected): {e}")
+
+# Add a status endpoint that clients can poll as fallback
+@register_route('/api/download/status')
+def get_download_status():
+    """Get current download status - fallback for when Socket.IO disconnects"""
+    return jsonify(download_status)
 
 def download_with_progress(repo_id, local_dir, allow_patterns):
     """Download with real-time byte-based progress monitoring"""
@@ -569,6 +577,26 @@ def api_delete_model():
             return jsonify({'error': message}), 500
     except Exception as e:
         return jsonify({'error': f'Error deleting model: {str(e)}'}), 500
+
+# ============== SOCKET.IO EVENTS ==============
+
+@socketio.on('connect')
+def handle_connect():
+    """Send current status when client connects"""
+    print(f"🔌 Client connected: {request.sid}")
+    # Send current download status to newly connected client
+    socketio.emit('download_progress', download_status.copy(), room=request.sid)
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle client disconnect"""
+    print(f"🔌 Client disconnected: {request.sid}")
+
+@socketio.on('request_status')
+def handle_status_request():
+    """Client can request current status"""
+    print(f"📊 Status requested by: {request.sid}")
+    socketio.emit('download_progress', download_status.copy(), room=request.sid)
 
 # ============== MAIN ==============
 
