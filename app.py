@@ -16,7 +16,7 @@ import datetime
 import re
 from collections import defaultdict
 from pathlib import Path
-from huggingface_hub import snapshot_download
+from huggingface_hub import snapshot_download, HfApi
 from huggingface_hub.utils import HfHubHTTPError
 
 app = Flask(__name__)
@@ -74,9 +74,68 @@ download_status = {
     "status": "idle", 
     "current_file": "",
     "downloaded_files": 0,
+    "downloaded_bytes": 0,
+    "total_bytes": 0,
     "repo_id": "",
     "start_time": None
 }
+
+def get_repo_info_with_patterns(repo_id, allow_patterns=None):
+    """Get repository info and calculate total expected download size"""
+    try:
+        api = HfApi()
+        repo_info = api.repo_info(repo_id, files_metadata=True)
+        
+        total_size = 0
+        file_count = 0
+        
+        for sibling in repo_info.siblings:
+            # Check if file matches patterns (if specified)
+            if allow_patterns:
+                matches_pattern = any(
+                    pattern.replace('*', '') in sibling.rfilename 
+                    for pattern in allow_patterns
+                )
+                if not matches_pattern:
+                    continue
+            
+            if hasattr(sibling, 'size') and sibling.size:
+                total_size += sibling.size
+                file_count += 1
+        
+        return total_size, file_count, repo_info
+    except Exception as e:
+        print(f"Warning: Could not get repo info: {e}")
+        return 0, 0, None
+
+def calculate_downloaded_size(local_dir, cache_dir, repo_id):
+    """Calculate total bytes downloaded by checking both final and cache directories"""
+    total_downloaded = 0
+    
+    # Check final destination files
+    if os.path.exists(local_dir):
+        for root, dirs, files in os.walk(local_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    total_downloaded += os.path.getsize(file_path)
+                except (OSError, IOError):
+                    pass
+    
+    # Check cache for incomplete files
+    cache_repo_dir = os.path.join(cache_dir, f"models--{repo_id.replace('/', '--')}")
+    if os.path.exists(cache_repo_dir):
+        for root, dirs, files in os.walk(cache_repo_dir):
+            for file in files:
+                # Include incomplete files and blobs
+                if file.endswith('.incomplete') or 'blobs' in root:
+                    file_path = os.path.join(root, file)
+                    try:
+                        total_downloaded += os.path.getsize(file_path)
+                    except (OSError, IOError):
+                        pass
+    
+    return total_downloaded
 
 def update_download_status(**kwargs):
     """Thread-safe update of download status with auto-emit"""
@@ -97,9 +156,22 @@ def update_download_status(**kwargs):
         print(f"❌ Failed to emit progress: {e}")
 
 def download_with_progress(repo_id, local_dir, allow_patterns):
-    """Download with real-time progress monitoring"""
+    """Download with real-time byte-based progress monitoring"""
     
     download_exception = [None]
+    
+    # Get repository info and expected size
+    print(f"📊 Getting repository information...")
+    total_expected_bytes, expected_files, repo_info = get_repo_info_with_patterns(repo_id, allow_patterns)
+    
+    if total_expected_bytes > 0:
+        print(f"📊 Expected download: {get_file_size_from_bytes(total_expected_bytes)} ({expected_files} files)")
+        update_download_status(
+            total_bytes=total_expected_bytes,
+            current_file=f"Expected: {get_file_size_from_bytes(total_expected_bytes)} ({expected_files} files)"
+        )
+    else:
+        print(f"⚠️ Could not determine total size, using file-count progress")
     
     def download_thread():
         try:
@@ -123,45 +195,64 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
     thread.start()
     
     # Monitor progress
-    progress = 10
+    cache_dir = "/models/.cache"
+    last_downloaded_bytes = 0
     last_file_count = 0
+    stall_counter = 0
     
     while thread.is_alive():
-        time.sleep(1)
+        time.sleep(2)  # Check every 2 seconds for more accurate byte tracking
         
         try:
-            # Check directory for new files
+            # Calculate current downloaded bytes
+            downloaded_bytes = calculate_downloaded_size(local_dir, cache_dir, repo_id)
+            
+            # Count files in destination
             current_files = list(Path(local_dir).rglob('*'))
             file_count = len([f for f in current_files if f.is_file()])
             
-            if file_count > last_file_count:
-                progress = min(95, progress + 3)
-                last_file_count = file_count
-                
-                # Find most recent file
-                latest_file = None
-                try:
-                    files = [f for f in current_files if f.is_file()]
-                    if files:
-                        latest_file = max(files, key=lambda f: f.stat().st_mtime)
-                except:
-                    pass
-                
-                current_file_name = latest_file.name if latest_file else "Processing files..."
-                
-                update_download_status(
-                    progress=progress,
-                    status='downloading',
-                    current_file=f"Processing: {current_file_name}",
-                    downloaded_files=file_count
-                )
-            elif progress < 90:
-                progress = min(90, progress + 1)
-                update_download_status(
-                    progress=progress,
-                    status='downloading',
-                    current_file='Downloading files...'
-                )
+            # Calculate progress
+            if total_expected_bytes > 0:
+                # Byte-based progress
+                progress = min(95, (downloaded_bytes / total_expected_bytes) * 100)
+                progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} / {get_file_size_from_bytes(total_expected_bytes)}"
+            else:
+                # Fallback to file-count progress
+                progress = min(95, 10 + (file_count * 5))
+                progress_info = f"{file_count} files downloaded"
+            
+            # Find most recent file
+            latest_file = None
+            try:
+                files = [f for f in current_files if f.is_file()]
+                if files:
+                    latest_file = max(files, key=lambda f: f.stat().st_mtime)
+            except:
+                pass
+            
+            current_file_name = latest_file.name if latest_file else "Processing files..."
+            
+            # Check if download is making progress
+            if downloaded_bytes > last_downloaded_bytes or file_count > last_file_count:
+                stall_counter = 0
+                status_message = f"Downloading: {current_file_name} ({progress_info})"
+            else:
+                stall_counter += 1
+                if stall_counter > 10:  # 20 seconds without progress
+                    status_message = f"Processing: {current_file_name} ({progress_info})"
+                else:
+                    status_message = f"Downloading: {current_file_name} ({progress_info})"
+            
+            update_download_status(
+                progress=progress,
+                status='downloading',
+                current_file=status_message,
+                downloaded_files=file_count,
+                downloaded_bytes=downloaded_bytes
+            )
+            
+            last_downloaded_bytes = downloaded_bytes
+            last_file_count = file_count
                 
         except Exception as e:
             print(f"Error monitoring progress: {e}")
@@ -184,6 +275,8 @@ def start_download_task(repo_id, quant_pattern):
             status="starting",
             current_file="Initializing download...",
             downloaded_files=0,
+            downloaded_bytes=0,
+            total_bytes=0,
             repo_id=repo_id,
             start_time=time.time()
         )
@@ -196,17 +289,21 @@ def start_download_task(repo_id, quant_pattern):
         update_download_status(
             progress=5,
             status='downloading',
-            current_file='Starting download...'
+            current_file='Getting repository information...'
         )
 
         # Execute download with progress monitoring
         download_with_progress(repo_id, local_dir, allow_patterns)
 
+        # Final size calculation
+        final_size = calculate_downloaded_size(local_dir, "/models/.cache", repo_id)
+        
         # Complete
         update_download_status(
             progress=100,
             status="completed",
-            current_file="Download completed successfully!"
+            current_file=f"Download completed! Total size: {get_file_size_from_bytes(final_size)}",
+            downloaded_bytes=final_size
         )
 
     except HfHubHTTPError as e:
@@ -373,6 +470,8 @@ def update_model_with_progress(repo_id, quant_pattern=""):
             status="starting",
             current_file="Initializing update...",
             downloaded_files=0,
+            downloaded_bytes=0,
+            total_bytes=0,
             repo_id=repo_id,
             start_time=time.time()
         )
@@ -385,17 +484,21 @@ def update_model_with_progress(repo_id, quant_pattern=""):
         update_download_status(
             progress=5,
             status='downloading',
-            current_file='Starting update...'
+            current_file='Getting repository information...'
         )
 
         # Execute download with progress monitoring
         download_with_progress(repo_id, local_dir, allow_patterns)
 
+        # Final size calculation
+        final_size = calculate_downloaded_size(local_dir, "/models/.cache", repo_id)
+
         # Complete
         update_download_status(
             progress=100,
             status="completed",
-            current_file="Update completed successfully!"
+            current_file=f"Update completed! Total size: {get_file_size_from_bytes(final_size)}",
+            downloaded_bytes=final_size
         )
 
     except HfHubHTTPError as e:
