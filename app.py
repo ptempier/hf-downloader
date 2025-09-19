@@ -103,12 +103,17 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
     
     def download_thread():
         try:
+            # Set custom cache directory within models folder
+            cache_dir = "/models/.cache"
+            os.makedirs(cache_dir, exist_ok=True)
+            
             snapshot_download(
                 repo_id=repo_id,
                 local_dir=local_dir,
                 allow_patterns=allow_patterns,
                 resume_download=True,
-                local_dir_use_symlinks=False
+                local_dir_use_symlinks=False,
+                cache_dir=cache_dir
             )
         except Exception as e:
             download_exception[0] = e
@@ -333,6 +338,10 @@ def update_model(repo_id, quant_pattern=""):
         local_dir = f"/models/{repo_id}"
         os.makedirs(local_dir, exist_ok=True)
         
+        # Set custom cache directory within models folder
+        cache_dir = "/models/.cache"
+        os.makedirs(cache_dir, exist_ok=True)
+        
         allow_patterns = [f"*{quant_pattern}*"] if quant_pattern.strip() else None
         
         snapshot_download(
@@ -340,7 +349,8 @@ def update_model(repo_id, quant_pattern=""):
             local_dir=local_dir,
             allow_patterns=allow_patterns,
             resume_download=True,
-            local_dir_use_symlinks=False
+            local_dir_use_symlinks=False,
+            cache_dir=cache_dir
         )
         
         return True, "Model updated successfully"
@@ -549,6 +559,7 @@ if __name__ == '__main__':
     print("="*50)
     print(f"🔥 Access URL: http://localhost:5000{base_url}/")
     print(f"💾 Models Directory: /models/")
+    print(f"🗂️ Cache Directory: /models/.cache/")
     if base_url:
         print(f"🌍 Client Base URL: {base_url}")
         print(f"🔌 Socket.IO Server Path: {socketio_path}")
@@ -557,4 +568,5 @@ if __name__ == '__main__':
     print("="*50)
 
     os.makedirs("/models", exist_ok=True)
+    os.makedirs("/models/.cache", exist_ok=True)
     socketio.run(app, debug=True, host='0.0.0.0', port=5000)
