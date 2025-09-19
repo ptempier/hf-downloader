@@ -8,7 +8,6 @@ from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
 import os
 import traceback
-import sys
 import threading
 import time
 import shutil
@@ -31,6 +30,21 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', path=s
 
 # Set HF_TRANSFER for faster downloads
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
+# Route helper function to register routes with and without base_url
+def register_route(path, methods=None, **kwargs):
+    """Register routes with and without base_url prefix"""
+    def decorator(func):
+        # Register base route
+        app.route(path, methods=methods, **kwargs)(func)
+        
+        # Register base_url route if configured
+        if base_url:
+            prefixed_path = f"{base_url}{path}"
+            app.route(prefixed_path, methods=methods, **kwargs)(func)
+        
+        return func
+    return decorator
 
 # ============== SHARED UTILITIES ==============
 
@@ -118,29 +132,22 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
     """Calculate total bytes downloaded by checking both final and cache directories"""
     total_downloaded = 0
     
+    # Helper function to safely get file size
+    def safe_getsize(file_path):
+        try:
+            return file_path.stat().st_size
+        except (OSError, IOError):
+            return 0
+    
     # Check final destination files
     if os.path.exists(local_dir):
-        for root, dirs, files in os.walk(local_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                try:
-                    size = os.path.getsize(file_path)
-                    total_downloaded += size
-                except (OSError, IOError):
-                    pass
+        local_path = Path(local_dir)
+        total_downloaded += sum(safe_getsize(f) for f in local_path.rglob('*') if f.is_file())
     
     # Check cache for incomplete files and blobs
-    cache_repo_dir = os.path.join(cache_dir, f"models--{repo_id.replace('/', '--')}")
-    
-    if os.path.exists(cache_repo_dir):
-        for root, dirs, files in os.walk(cache_repo_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                try:
-                    size = os.path.getsize(file_path)
-                    total_downloaded += size
-                except (OSError, IOError):
-                    pass
+    cache_repo_dir = Path(cache_dir) / f"models--{repo_id.replace('/', '--')}"
+    if cache_repo_dir.exists():
+        total_downloaded += sum(safe_getsize(f) for f in cache_repo_dir.rglob('*') if f.is_file())
     
     return total_downloaded
 
@@ -157,17 +164,10 @@ def update_download_status(**kwargs):
             download_status['eta'] = eta
     
     try:
-        # Emit to all connected clients
         socketio.emit('download_progress', download_status.copy())
-        # Only log significant progress changes to reduce noise
-        current_progress = download_status.get('progress', 0)
-        if current_progress % 5 == 0 or current_progress > 95:  # Log every 5% or near completion
-            print(f"✅ Progress: {current_progress:.1f}% - {download_status.get('current_file', '')}")
+        print(f"Progress: {download_status.get('progress', 0):.1f}% - {download_status.get('current_file', '')}")
     except Exception as e:
-        # Silently handle broken pipe and connection errors
-        if "Broken pipe" not in str(e) and "Connection" not in str(e):
-            print(f"❌ Failed to emit progress: {e}")
-        # Continue without failing the download
+        print(f"Failed to emit progress: {e}")
 
 def download_with_progress(repo_id, local_dir, allow_patterns):
     """Download with real-time byte-based progress monitoring"""
@@ -218,7 +218,6 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
     cache_dir = "/models/.cache"
     last_downloaded_bytes = 0
     last_file_count = 0
-    stall_counter = 0
     progress = 10  # Start at 10% for file-count fallback
     
     while thread.is_alive():
@@ -229,18 +228,17 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
             current_files = list(Path(local_dir).rglob('*'))
             file_count = len([f for f in current_files if f.is_file()])
             
+            # Calculate progress and info
             if use_byte_progress:
-                # Byte-based progress
                 downloaded_bytes = calculate_downloaded_size(local_dir, cache_dir, repo_id)
                 
                 if downloaded_bytes > 0 and total_expected_bytes > 0:
                     progress = min(95, (downloaded_bytes / total_expected_bytes) * 100)
                     progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} / {get_file_size_from_bytes(total_expected_bytes)}"
                 else:
-                    progress = min(95, 10 + (file_count * 3))  # Fallback during this check
+                    progress = min(95, 10 + (file_count * 3))
                     progress_info = f"{file_count} files"
                 
-                # Update global status
                 update_download_status(downloaded_bytes=downloaded_bytes)
             else:
                 # File-count fallback
@@ -252,39 +250,28 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
                 progress_info = f"{file_count} files downloaded"
                 downloaded_bytes = 0
             
-            # Find most recent file
-            latest_file = None
+            # Find most recent file for status
+            current_file_name = "Processing files..."
             try:
                 files = [f for f in current_files if f.is_file()]
                 if files:
                     latest_file = max(files, key=lambda f: f.stat().st_mtime)
+                    current_file_name = latest_file.name
             except:
                 pass
             
-            current_file_name = latest_file.name if latest_file else "Processing files..."
-            
-            # Check if download is making progress
-            if (use_byte_progress and downloaded_bytes > last_downloaded_bytes) or file_count > last_file_count:
-                stall_counter = 0
-                status_message = f"Downloading: {current_file_name} ({progress_info})"
-            else:
-                stall_counter += 1
-                if stall_counter > 10:  # 10 seconds without progress
-                    status_message = f"Processing: {current_file_name} ({progress_info})"
-                else:
-                    status_message = f"Downloading: {current_file_name} ({progress_info})"
-            
-            # Only print progress every 5% or when files change to reduce log spam
-            if (int(progress) % 5 == 0 and int(progress) != int(download_status.get('progress', 0))) or file_count != last_file_count:
-                print(f"📈 Progress: {progress:.1f}% - {status_message}")
+            # Determine if making progress
+            is_progressing = (use_byte_progress and downloaded_bytes > last_downloaded_bytes) or file_count > last_file_count
+            status_prefix = "Downloading" if is_progressing else "Processing"
             
             update_download_status(
                 progress=progress,
                 status='downloading',
-                current_file=status_message,
+                current_file=f"{status_prefix}: {current_file_name} ({progress_info})",
                 downloaded_files=file_count
             )
             
+            # Update counters for next iteration
             if use_byte_progress:
                 last_downloaded_bytes = downloaded_bytes
             last_file_count = file_count
@@ -300,9 +287,9 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
     if download_exception[0]:
         raise download_exception[0]
 
-def start_download_task(repo_id, quant_pattern):
-    """Main download function"""
-    print(f"\n=== DOWNLOAD STARTED ===")
+def download_model_task(repo_id, quant_pattern, operation_type="download"):
+    """Unified function for downloading or updating models with progress tracking"""
+    print(f"\n=== {operation_type.upper()} STARTED ===")
     print(f"Repository ID: {repo_id}")
     print(f"Quantization Pattern: '{quant_pattern}'")
 
@@ -311,7 +298,7 @@ def start_download_task(repo_id, quant_pattern):
         update_download_status(
             progress=0,
             status="starting",
-            current_file="Initializing download...",
+            current_file=f"Initializing {operation_type}...",
             downloaded_files=0,
             downloaded_bytes=0,
             total_bytes=0,
@@ -337,10 +324,11 @@ def start_download_task(repo_id, quant_pattern):
         final_size = calculate_downloaded_size(local_dir, "/models/.cache", repo_id)
         
         # Complete
+        completion_msg = "Download completed!" if operation_type == "download" else "Update completed!"
         update_download_status(
             progress=100,
             status="completed",
-            current_file=f"Download completed! Total size: {get_file_size_from_bytes(final_size)}",
+            current_file=f"{completion_msg} Total size: {get_file_size_from_bytes(final_size)}",
             downloaded_bytes=final_size
         )
 
@@ -348,8 +336,17 @@ def start_download_task(repo_id, quant_pattern):
         update_download_status(progress=0, status="error", current_file=f"HuggingFace error: {str(e)}")
     except Exception as e:
         tb = traceback.format_exc()
-        print(f"Download error: {e}\n{tb}")
+        print(f"{operation_type.capitalize()} error: {e}\n{tb}")
         update_download_status(progress=0, status="error", current_file=f"Error: {str(e)}")
+
+# Convenience wrappers for backward compatibility
+def start_download_task(repo_id, quant_pattern):
+    """Main download function"""
+    return download_model_task(repo_id, quant_pattern, "download")
+
+def update_model_with_progress(repo_id, quant_pattern=""):
+    """Update model with progress tracking via Socket.IO"""
+    return download_model_task(repo_id, quant_pattern, "update")
 
 # ============== MODEL SCANNING ==============
 
@@ -464,88 +461,6 @@ def scan_models():
 
 # ============== CRUD OPERATIONS ==============
 
-def update_model(repo_id, quant_pattern=""):
-    """Update/re-download a model"""
-    try:
-        if not validate_repo_id(repo_id):
-            return False, 'Invalid repository id'
-
-        local_dir = f"/models/{repo_id}"
-        os.makedirs(local_dir, exist_ok=True)
-        
-        # Set custom cache directory within models folder
-        cache_dir = "/models/.cache"
-        os.makedirs(cache_dir, exist_ok=True)
-        
-        allow_patterns = [f"*{quant_pattern}*"] if quant_pattern.strip() else None
-        
-        snapshot_download(
-            repo_id=repo_id,
-            local_dir=local_dir,
-            allow_patterns=allow_patterns,
-            resume_download=True,
-            local_dir_use_symlinks=False,
-            cache_dir=cache_dir
-        )
-        
-        return True, "Model updated successfully"
-        
-    except HfHubHTTPError as e:
-        return False, f"Error updating model: {str(e)}"
-    except Exception as e:
-        return False, f"Unexpected error: {str(e)}"
-
-def update_model_with_progress(repo_id, quant_pattern=""):
-    """Update model with progress tracking via Socket.IO"""
-    print(f"\n=== UPDATE STARTED ===")
-    print(f"Repository ID: {repo_id}")
-    print(f"Quantization Pattern: '{quant_pattern}'")
-
-    try:
-        # Reset and initialize status
-        update_download_status(
-            progress=0,
-            status="starting",
-            current_file="Initializing update...",
-            downloaded_files=0,
-            downloaded_bytes=0,
-            total_bytes=0,
-            repo_id=repo_id,
-            start_time=time.time()
-        )
-
-        local_dir = f"/models/{repo_id}"
-        os.makedirs(local_dir, exist_ok=True)
-
-        allow_patterns = [f"*{quant_pattern}*"] if quant_pattern.strip() else None
-
-        update_download_status(
-            progress=5,
-            status='downloading',
-            current_file='Getting repository information...'
-        )
-
-        # Execute download with progress monitoring
-        download_with_progress(repo_id, local_dir, allow_patterns)
-
-        # Final size calculation
-        final_size = calculate_downloaded_size(local_dir, "/models/.cache", repo_id)
-
-        # Complete
-        update_download_status(
-            progress=100,
-            status="completed",
-            current_file=f"Update completed! Total size: {get_file_size_from_bytes(final_size)}",
-            downloaded_bytes=final_size
-        )
-
-    except HfHubHTTPError as e:
-        update_download_status(progress=0, status="error", current_file=f"HuggingFace error: {str(e)}")
-    except Exception as e:
-        tb = traceback.format_exc()
-        print(f"Update error: {e}\n{tb}")
-        update_download_status(progress=0, status="error", current_file=f"Error: {str(e)}")
-
 def delete_model(model_path):
     """Delete a model directory"""
     try:
@@ -585,36 +500,17 @@ def inject_base_url():
 
 @app.before_request
 def log_request():
-    # Only log non-routine requests to reduce noise
-    if not request.path.startswith('/socket.io/'):
-        print(f"\n📨 {request.method} {request.path}")
+    print(f"📨 {request.method} {request.path}")
 
-@app.errorhandler(BrokenPipeError)
-def handle_broken_pipe(e):
-    # Silently handle broken pipe errors (client disconnections)
-    return '', 500
-
-@app.errorhandler(ConnectionResetError)
-def handle_connection_reset(e):
-    # Silently handle connection reset errors
-    return '', 500
-
-@app.route('/')
+@register_route('/')
 def index():
     return render_template('index.html')
-
-# Add route for base URL
-if base_url:
-    @app.route(base_url)
-    @app.route(f"{base_url}/")
-    def index_with_base():
-        return render_template('index.html')
 
 @app.route('/favicon.ico')
 def favicon():
     return ('', 204)
 
-@app.route('/download', methods=['POST'])
+@register_route('/download', methods=['POST'])
 def start_download():
     data = request.get_json() or {}
     repo_id = data.get('repo_id', '').strip()
@@ -633,34 +529,16 @@ def start_download():
     socketio.start_background_task(start_download_task, repo_id, quant_pattern)
     return jsonify({'message': 'Download started'})
 
-# Add route with base URL
-if base_url:
-    @app.route(f"{base_url}/download", methods=['POST'])
-    def start_download_with_base():
-        return start_download()
-
-@app.route('/status')
+@register_route('/status')
 def get_status():
     return jsonify(download_status)
 
-# Add route with base URL
-if base_url:
-    @app.route(f"{base_url}/status")
-    def get_status_with_base():
-        return get_status()
-
-@app.route('/api/models')
+@register_route('/api/models')
 def api_models():
     models = scan_models()
     return jsonify(models)
 
-# Add route with base URL
-if base_url:
-    @app.route(f"{base_url}/api/models")
-    def api_models_with_base():
-        return api_models()
-
-@app.route('/api/models/update', methods=['POST'])
+@register_route('/api/models/update', methods=['POST'])
 def api_update_model():
     data = request.get_json() or {}
     repo_id = data.get('repo_id', '').strip()
@@ -675,13 +553,7 @@ def api_update_model():
     threading.Thread(target=update_thread, daemon=True).start()
     return jsonify({'message': f'Update started for {repo_id}'})
 
-# Add route with base URL
-if base_url:
-    @app.route(f"{base_url}/api/models/update", methods=['POST'])
-    def api_update_model_with_base():
-        return api_update_model()
-
-@app.route('/api/models/delete', methods=['POST'])
+@register_route('/api/models/delete', methods=['POST'])
 def api_delete_model():
     data = request.get_json() or {}
     model_path = data.get('path', '').strip()
@@ -697,12 +569,6 @@ def api_delete_model():
             return jsonify({'error': message}), 500
     except Exception as e:
         return jsonify({'error': f'Error deleting model: {str(e)}'}), 500
-
-# Add route with base URL
-if base_url:
-    @app.route(f"{base_url}/api/models/delete", methods=['POST'])
-    def api_delete_model_with_base():
-        return api_delete_model()
 
 # ============== MAIN ==============
 
