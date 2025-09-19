@@ -25,7 +25,7 @@ app.config['SECRET_KEY'] = 'your-secret-key'
 # CONFIGURATION
 base_url = "/hf-downloader"   # Set this to your actual base URL path
 
-# Configure Socket.IO
+# Configure Socket.IO - use base_url for custom path
 socketio_path = f"{base_url}/socket.io" if base_url else "/socket.io"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', path=socketio_path)
 
