@@ -83,11 +83,14 @@ download_status = {
 def get_repo_info_with_patterns(repo_id, allow_patterns=None):
     """Get repository info and calculate total expected download size"""
     try:
+        print(f"🔍 Fetching repository info for {repo_id}...")
         api = HfApi()
         repo_info = api.repo_info(repo_id, files_metadata=True)
         
         total_size = 0
         file_count = 0
+        
+        print(f"📂 Repository has {len(repo_info.siblings)} files")
         
         for sibling in repo_info.siblings:
             # Check if file matches patterns (if specified)
@@ -102,15 +105,22 @@ def get_repo_info_with_patterns(repo_id, allow_patterns=None):
             if hasattr(sibling, 'size') and sibling.size:
                 total_size += sibling.size
                 file_count += 1
+                print(f"  📄 {sibling.rfilename}: {get_file_size_from_bytes(sibling.size)}")
         
+        print(f"✅ Total expected: {get_file_size_from_bytes(total_size)} ({file_count} files)")
         return total_size, file_count, repo_info
     except Exception as e:
-        print(f"Warning: Could not get repo info: {e}")
+        print(f"❌ Failed to get repo info: {e}")
+        traceback.print_exc()
         return 0, 0, None
 
 def calculate_downloaded_size(local_dir, cache_dir, repo_id):
     """Calculate total bytes downloaded by checking both final and cache directories"""
     total_downloaded = 0
+    
+    print(f"📊 Calculating downloaded size...")
+    print(f"   Local dir: {local_dir}")
+    print(f"   Cache dir: {cache_dir}")
     
     # Check final destination files
     if os.path.exists(local_dir):
@@ -118,23 +128,28 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
             for file in files:
                 file_path = os.path.join(root, file)
                 try:
-                    total_downloaded += os.path.getsize(file_path)
+                    size = os.path.getsize(file_path)
+                    total_downloaded += size
+                    print(f"   📄 Final: {file} = {get_file_size_from_bytes(size)}")
                 except (OSError, IOError):
                     pass
     
-    # Check cache for incomplete files
+    # Check cache for incomplete files and blobs
     cache_repo_dir = os.path.join(cache_dir, f"models--{repo_id.replace('/', '--')}")
+    print(f"   Cache repo dir: {cache_repo_dir}")
+    
     if os.path.exists(cache_repo_dir):
         for root, dirs, files in os.walk(cache_repo_dir):
             for file in files:
-                # Include incomplete files and blobs
-                if file.endswith('.incomplete') or 'blobs' in root:
-                    file_path = os.path.join(root, file)
-                    try:
-                        total_downloaded += os.path.getsize(file_path)
-                    except (OSError, IOError):
-                        pass
+                file_path = os.path.join(root, file)
+                try:
+                    size = os.path.getsize(file_path)
+                    total_downloaded += size
+                    print(f"   💾 Cache: {file} = {get_file_size_from_bytes(size)}")
+                except (OSError, IOError):
+                    pass
     
+    print(f"📊 Total downloaded: {get_file_size_from_bytes(total_downloaded)}")
     return total_downloaded
 
 def update_download_status(**kwargs):
@@ -150,10 +165,12 @@ def update_download_status(**kwargs):
             download_status['eta'] = eta
     
     try:
+        # Emit to all connected clients
         socketio.emit('download_progress', download_status.copy())
-        print(f"✅ Emitted download_progress: {download_status.get('progress', 0):.1f}% - {download_status.get('current_file', '')}")
+        print(f"✅ Progress: {download_status.get('progress', 0):.1f}% - {download_status.get('current_file', '')}")
     except Exception as e:
         print(f"❌ Failed to emit progress: {e}")
+        # Continue without failing the download
 
 def download_with_progress(repo_id, local_dir, allow_patterns):
     """Download with real-time byte-based progress monitoring"""
@@ -164,14 +181,20 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
     print(f"📊 Getting repository information...")
     total_expected_bytes, expected_files, repo_info = get_repo_info_with_patterns(repo_id, allow_patterns)
     
-    if total_expected_bytes > 0:
-        print(f"📊 Expected download: {get_file_size_from_bytes(total_expected_bytes)} ({expected_files} files)")
+    # Use file-count fallback if we can't get byte info
+    use_byte_progress = total_expected_bytes > 0
+    
+    if use_byte_progress:
+        print(f"✅ Using byte-based progress tracking")
         update_download_status(
             total_bytes=total_expected_bytes,
             current_file=f"Expected: {get_file_size_from_bytes(total_expected_bytes)} ({expected_files} files)"
         )
     else:
-        print(f"⚠️ Could not determine total size, using file-count progress")
+        print(f"⚠️ Using file-count progress tracking (couldn't get total size)")
+        update_download_status(
+            current_file="Starting download (size unknown)..."
+        )
     
     def download_thread():
         try:
@@ -199,27 +222,38 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
     last_downloaded_bytes = 0
     last_file_count = 0
     stall_counter = 0
+    progress = 10  # Start at 10% for file-count fallback
     
     while thread.is_alive():
-        time.sleep(2)  # Check every 2 seconds for more accurate byte tracking
+        time.sleep(3)  # Check every 3 seconds
         
         try:
-            # Calculate current downloaded bytes
-            downloaded_bytes = calculate_downloaded_size(local_dir, cache_dir, repo_id)
-            
             # Count files in destination
             current_files = list(Path(local_dir).rglob('*'))
             file_count = len([f for f in current_files if f.is_file()])
             
-            # Calculate progress
-            if total_expected_bytes > 0:
+            if use_byte_progress:
                 # Byte-based progress
-                progress = min(95, (downloaded_bytes / total_expected_bytes) * 100)
-                progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} / {get_file_size_from_bytes(total_expected_bytes)}"
+                downloaded_bytes = calculate_downloaded_size(local_dir, cache_dir, repo_id)
+                
+                if downloaded_bytes > 0 and total_expected_bytes > 0:
+                    progress = min(95, (downloaded_bytes / total_expected_bytes) * 100)
+                    progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} / {get_file_size_from_bytes(total_expected_bytes)}"
+                else:
+                    progress = min(95, 10 + (file_count * 3))  # Fallback during this check
+                    progress_info = f"{file_count} files"
+                
+                # Update global status
+                update_download_status(downloaded_bytes=downloaded_bytes)
             else:
-                # Fallback to file-count progress
-                progress = min(95, 10 + (file_count * 5))
+                # File-count fallback
+                if file_count > last_file_count:
+                    progress = min(95, progress + 5)
+                elif progress < 90:
+                    progress = min(90, progress + 1)
+                
                 progress_info = f"{file_count} files downloaded"
+                downloaded_bytes = 0
             
             # Find most recent file
             latest_file = None
@@ -233,29 +267,34 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
             current_file_name = latest_file.name if latest_file else "Processing files..."
             
             # Check if download is making progress
-            if downloaded_bytes > last_downloaded_bytes or file_count > last_file_count:
+            if (use_byte_progress and downloaded_bytes > last_downloaded_bytes) or file_count > last_file_count:
                 stall_counter = 0
                 status_message = f"Downloading: {current_file_name} ({progress_info})"
             else:
                 stall_counter += 1
-                if stall_counter > 10:  # 20 seconds without progress
+                if stall_counter > 5:  # 15 seconds without progress
                     status_message = f"Processing: {current_file_name} ({progress_info})"
                 else:
                     status_message = f"Downloading: {current_file_name} ({progress_info})"
+            
+            print(f"📈 Progress: {progress:.1f}% - {status_message}")
             
             update_download_status(
                 progress=progress,
                 status='downloading',
                 current_file=status_message,
-                downloaded_files=file_count,
-                downloaded_bytes=downloaded_bytes
+                downloaded_files=file_count
             )
             
-            last_downloaded_bytes = downloaded_bytes
+            if use_byte_progress:
+                last_downloaded_bytes = downloaded_bytes
             last_file_count = file_count
                 
         except Exception as e:
-            print(f"Error monitoring progress: {e}")
+            print(f"❌ Error monitoring progress: {e}")
+            traceback.print_exc()
+    
+    print(f"✅ Download thread completed")
     
     # Wait for completion and check for errors
     thread.join()
