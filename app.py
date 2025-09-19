@@ -23,10 +23,10 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'
 
 # CONFIGURATION
-base_url = "/hf-downloader"   # Set this to your actual base URL path
+base_url = "/hf-downloader"   # Set this to match your Caddy handle_path
 
-# Configure Socket.IO - use base_url for custom path
-socketio_path = f"{base_url}/socket.io" if base_url else "/socket.io"
+# Configure Socket.IO - for Caddy handle_path, use root path since Caddy strips the prefix
+socketio_path = "/socket.io"  # Caddy strips /hf-downloader, so Flask sees root paths
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', path=socketio_path)
 
 # Set HF_TRANSFER for faster downloads
@@ -350,6 +350,51 @@ def update_model(repo_id, quant_pattern=""):
     except Exception as e:
         return False, f"Unexpected error: {str(e)}"
 
+def update_model_with_progress(repo_id, quant_pattern=""):
+    """Update model with progress tracking via Socket.IO"""
+    print(f"\n=== UPDATE STARTED ===")
+    print(f"Repository ID: {repo_id}")
+    print(f"Quantization Pattern: '{quant_pattern}'")
+
+    try:
+        # Reset and initialize status
+        update_download_status(
+            progress=0,
+            status="starting",
+            current_file="Initializing update...",
+            downloaded_files=0,
+            repo_id=repo_id,
+            start_time=time.time()
+        )
+
+        local_dir = f"/models/{repo_id}"
+        os.makedirs(local_dir, exist_ok=True)
+
+        allow_patterns = [f"*{quant_pattern}*"] if quant_pattern.strip() else None
+
+        update_download_status(
+            progress=5,
+            status='downloading',
+            current_file='Starting update...'
+        )
+
+        # Execute download with progress monitoring
+        download_with_progress(repo_id, local_dir, allow_patterns)
+
+        # Complete
+        update_download_status(
+            progress=100,
+            status="completed",
+            current_file="Update completed successfully!"
+        )
+
+    except HfHubHTTPError as e:
+        update_download_status(progress=0, status="error", current_file=f"HuggingFace error: {str(e)}")
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"Update error: {e}\n{tb}")
+        update_download_status(progress=0, status="error", current_file=f"Error: {str(e)}")
+
 def delete_model(model_path):
     """Delete a model directory"""
     try:
@@ -395,6 +440,13 @@ def log_request():
 def index():
     return render_template('index.html')
 
+# Add route for base URL
+if base_url:
+    @app.route(base_url)
+    @app.route(f"{base_url}/")
+    def index_with_base():
+        return render_template('index.html')
+
 @app.route('/favicon.ico')
 def favicon():
     return ('', 204)
@@ -418,14 +470,32 @@ def start_download():
     socketio.start_background_task(start_download_task, repo_id, quant_pattern)
     return jsonify({'message': 'Download started'})
 
+# Add route with base URL
+if base_url:
+    @app.route(f"{base_url}/download", methods=['POST'])
+    def start_download_with_base():
+        return start_download()
+
 @app.route('/status')
 def get_status():
     return jsonify(download_status)
+
+# Add route with base URL
+if base_url:
+    @app.route(f"{base_url}/status")
+    def get_status_with_base():
+        return get_status()
 
 @app.route('/api/models')
 def api_models():
     models = scan_models()
     return jsonify(models)
+
+# Add route with base URL
+if base_url:
+    @app.route(f"{base_url}/api/models")
+    def api_models_with_base():
+        return api_models()
 
 @app.route('/api/models/update', methods=['POST'])
 def api_update_model():
@@ -441,6 +511,12 @@ def api_update_model():
 
     threading.Thread(target=update_thread, daemon=True).start()
     return jsonify({'message': f'Update started for {repo_id}'})
+
+# Add route with base URL
+if base_url:
+    @app.route(f"{base_url}/api/models/update", methods=['POST'])
+    def api_update_model_with_base():
+        return api_update_model()
 
 @app.route('/api/models/delete', methods=['POST'])
 def api_delete_model():
@@ -459,17 +535,25 @@ def api_delete_model():
     except Exception as e:
         return jsonify({'error': f'Error deleting model: {str(e)}'}), 500
 
+# Add route with base URL
+if base_url:
+    @app.route(f"{base_url}/api/models/delete", methods=['POST'])
+    def api_delete_model_with_base():
+        return api_delete_model()
+
 # ============== MAIN ==============
 
 if __name__ == '__main__':
     print("\n" + "="*50)
     print("🚀 STARTING HUGGINGFACE MODEL DOWNLOADER")
     print("="*50)
-    print(f"🔥 Unified Interface: http://localhost:5000{base_url}/")
+    print(f"🔥 Access URL: http://localhost:5000{base_url}/")
     print(f"💾 Models Directory: /models/")
     if base_url:
-        print(f"🌍 Base URL Path: {base_url}")
-        print(f"🔌 Socket.IO Path: {socketio_path}")
+        print(f"🌍 Client Base URL: {base_url}")
+        print(f"🔌 Socket.IO Server Path: {socketio_path}")
+        print(f"📡 Socket.IO Client Path: {base_url}/socket.io")
+        print("📝 Note: Using Caddy handle_path configuration")
     print("="*50)
 
     os.makedirs("/models", exist_ok=True)

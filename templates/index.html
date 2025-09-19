@@ -421,6 +421,7 @@
         function initializeSocket() {
             if (typeof io !== 'undefined') {
                 const socketPath = BASE_URL ? `${BASE_URL}/socket.io` : '/socket.io';
+                console.log(`🔌 Initializing Socket.IO with path: ${socketPath}`);
                 socket = io({ path: socketPath });
             } else {
                 console.warn('Socket.IO not available - real-time features disabled');
@@ -819,6 +820,7 @@
         // Initialize application
         function init() {
             console.log(`🚀 Initializing app with BASE_URL: "${BASE_URL}"`);
+            console.log(`🔍 Expected Socket.IO path: ${BASE_URL ? `${BASE_URL}/socket.io` : '/socket.io'}`);
             
             // Try to load Socket.IO and initialize
             const socketScript = document.createElement('script');
