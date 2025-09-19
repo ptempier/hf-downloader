@@ -118,10 +118,6 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
     """Calculate total bytes downloaded by checking both final and cache directories"""
     total_downloaded = 0
     
-    print(f"📊 Calculating downloaded size...")
-    print(f"   Local dir: {local_dir}")
-    print(f"   Cache dir: {cache_dir}")
-    
     # Check final destination files
     if os.path.exists(local_dir):
         for root, dirs, files in os.walk(local_dir):
@@ -130,13 +126,11 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
                 try:
                     size = os.path.getsize(file_path)
                     total_downloaded += size
-                    print(f"   📄 Final: {file} = {get_file_size_from_bytes(size)}")
                 except (OSError, IOError):
                     pass
     
     # Check cache for incomplete files and blobs
     cache_repo_dir = os.path.join(cache_dir, f"models--{repo_id.replace('/', '--')}")
-    print(f"   Cache repo dir: {cache_repo_dir}")
     
     if os.path.exists(cache_repo_dir):
         for root, dirs, files in os.walk(cache_repo_dir):
@@ -145,11 +139,9 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
                 try:
                     size = os.path.getsize(file_path)
                     total_downloaded += size
-                    print(f"   💾 Cache: {file} = {get_file_size_from_bytes(size)}")
                 except (OSError, IOError):
                     pass
     
-    print(f"📊 Total downloaded: {get_file_size_from_bytes(total_downloaded)}")
     return total_downloaded
 
 def update_download_status(**kwargs):
@@ -167,9 +159,14 @@ def update_download_status(**kwargs):
     try:
         # Emit to all connected clients
         socketio.emit('download_progress', download_status.copy())
-        print(f"✅ Progress: {download_status.get('progress', 0):.1f}% - {download_status.get('current_file', '')}")
+        # Only log significant progress changes to reduce noise
+        current_progress = download_status.get('progress', 0)
+        if current_progress % 5 == 0 or current_progress > 95:  # Log every 5% or near completion
+            print(f"✅ Progress: {current_progress:.1f}% - {download_status.get('current_file', '')}")
     except Exception as e:
-        print(f"❌ Failed to emit progress: {e}")
+        # Silently handle broken pipe and connection errors
+        if "Broken pipe" not in str(e) and "Connection" not in str(e):
+            print(f"❌ Failed to emit progress: {e}")
         # Continue without failing the download
 
 def download_with_progress(repo_id, local_dir, allow_patterns):
@@ -225,7 +222,7 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
     progress = 10  # Start at 10% for file-count fallback
     
     while thread.is_alive():
-        time.sleep(3)  # Check every 3 seconds
+        time.sleep(1)  # Check every second for responsive updates
         
         try:
             # Count files in destination
@@ -272,12 +269,14 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
                 status_message = f"Downloading: {current_file_name} ({progress_info})"
             else:
                 stall_counter += 1
-                if stall_counter > 5:  # 15 seconds without progress
+                if stall_counter > 10:  # 10 seconds without progress
                     status_message = f"Processing: {current_file_name} ({progress_info})"
                 else:
                     status_message = f"Downloading: {current_file_name} ({progress_info})"
             
-            print(f"📈 Progress: {progress:.1f}% - {status_message}")
+            # Only print progress every 5% or when files change to reduce log spam
+            if (int(progress) % 5 == 0 and int(progress) != int(download_status.get('progress', 0))) or file_count != last_file_count:
+                print(f"📈 Progress: {progress:.1f}% - {status_message}")
             
             update_download_status(
                 progress=progress,
@@ -586,7 +585,19 @@ def inject_base_url():
 
 @app.before_request
 def log_request():
-    print(f"\n📨 {request.method} {request.path}")
+    # Only log non-routine requests to reduce noise
+    if not request.path.startswith('/socket.io/'):
+        print(f"\n📨 {request.method} {request.path}")
+
+@app.errorhandler(BrokenPipeError)
+def handle_broken_pipe(e):
+    # Silently handle broken pipe errors (client disconnections)
+    return '', 500
+
+@app.errorhandler(ConnectionResetError)
+def handle_connection_reset(e):
+    # Silently handle connection reset errors
+    return '', 500
 
 @app.route('/')
 def index():
