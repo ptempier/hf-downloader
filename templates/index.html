@@ -798,20 +798,20 @@
             });
 
             socket.on('download_progress', (data) => {
-                const { progress, status, message } = data;
+                const { progress, status, current_file } = data;
                 
                 if (status === 'completed') {
-                    updateProgressUI(progress, status, message);
+                    updateProgressUI(progress, status, current_file);
                     addLog('===== DOWNLOAD COMPLETED =====', 'success');
                 } else if (status === 'error') {
-                    updateProgressUI(progress, status, message);
+                    updateProgressUI(progress, status, current_file);
                     addLog('===== DOWNLOAD FAILED =====', 'error');
                 } else if (status === 'downloading') {
-                    updateProgressUI(progress || 0, status, message);
+                    updateProgressUI(progress || 0, status, current_file);
                     if (progress !== undefined) {
-                        addProgressLog(`🔥 ${message}`, progress);
+                        addProgressLog(`🔥 ${current_file}`, progress);
                     } else {
-                        addLog(`🔥 ${message}`, 'info');
+                        addLog(`🔥 ${current_file}`, 'info');
                     }
                 }
             });
