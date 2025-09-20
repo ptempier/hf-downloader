@@ -11,6 +11,7 @@ services:
       - hf-cache:/home/appuser/.cache/huggingface  # Cache HuggingFace models
     environment:
       - HF_HUB_ENABLE_HF_TRANSFER=1
+      - GUNICORN_CMD_ARGS=--workers 3
       # Optional: Add your HuggingFace token for private models
       # - HF_TOKEN=your_hf_token_here
     restart: unless-stopped
