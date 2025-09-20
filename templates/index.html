@@ -431,7 +431,7 @@
             
             pollInterval = setInterval(async () => {
                 try {
-                    const response = await fetch(buildURL('api/download/status'));
+                    const response = await fetch(buildURL('api/status'));
                     if (response.ok) {
                         const data = await response.json();
                         handleDownloadProgress(data);
@@ -450,7 +450,7 @@
         }
         async function pollDownloadStatus() {
             try {
-                const response = await fetch(buildURL('api/download/status'));
+                const response = await fetch(buildURL('api/status'));
                 if (response.ok) {
                     const data = await response.json();
                     handleDownloadProgress(data);
@@ -710,7 +710,7 @@
             showLoading();
             addLog('🔍 Loading models...', 'info');
             try {
-                const response = await fetch(buildURL('api/models'));
+                const response = await fetch(buildURL('api/list'));
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 
                 const models = await response.json();
@@ -726,7 +726,7 @@
         
         async function updateModel(repoId) {
             try {
-                const response = await fetch(buildURL('api/models/update'), {
+                const response = await fetch(buildURL('api/update'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ repo_id: repoId })
@@ -760,7 +760,7 @@
             
             try {
                 addLog(`🗑️ ===== DELETE STARTED: ${currentModelToDelete.name} =====`, 'info');
-                const response = await fetch(buildURL('api/models/delete'), {
+                const response = await fetch(buildURL('api/delete'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path: currentModelToDelete.path })
@@ -803,7 +803,7 @@
 
             try {
                 startDownloadUI();
-                const response = await fetch(buildURL('download'), {
+                const response = await fetch(buildURL('api/download'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(data)
@@ -868,7 +868,7 @@
         // Check if there's an ongoing download when app starts
         async function checkOngoingDownload() {
             try {
-                const response = await fetch(buildURL('api/download/status'));
+                const response = await fetch(buildURL('api/status'));
                 if (response.ok) {
                     const data = await response.json();
                     if (data.status === 'downloading' || data.status === 'starting') {
