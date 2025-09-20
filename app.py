@@ -73,7 +73,7 @@ def validate_model_path(model_path):
 
 # ============== DOWNLOAD MANAGEMENT ==============
 
-# Global download status
+# Global download status with monitoring
 download_status = {
     "progress": 0, 
     "status": "idle", 
@@ -84,6 +84,71 @@ download_status = {
     "repo_id": "",
     "start_time": None
 }
+
+# Simple monitoring state
+_monitoring_active = False
+_monitoring_thread = None
+
+def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
+    """Start a simple progress monitoring thread"""
+    global _monitoring_active, _monitoring_thread
+    
+    if _monitoring_active:
+        return  # Already monitoring
+    
+    _monitoring_active = True
+    
+    def monitor():
+        cache_dir = "/models/.cache"
+        last_downloaded_bytes = 0
+        
+        while _monitoring_active:
+            time.sleep(3)  # Check every 3 seconds (less frequent)
+            
+            try:
+                if not _monitoring_active:
+                    break
+                    
+                # Simple byte calculation
+                downloaded_bytes = calculate_downloaded_size(local_dir, cache_dir, repo_id)
+                
+                # Basic progress calculation
+                if total_expected_bytes > 0:
+                    progress = min(95, (downloaded_bytes / total_expected_bytes) * 100)
+                    progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} / {get_file_size_from_bytes(total_expected_bytes)}"
+                else:
+                    progress = min(95, 10 + (downloaded_bytes / (1024 * 1024 * 100)))
+                    progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} downloaded"
+                
+                # Simple status update
+                is_progressing = downloaded_bytes > last_downloaded_bytes
+                status_msg = "Downloading..." if is_progressing else "Processing..."
+                
+                if download_status["status"] == "downloading":  # Only update if still downloading
+                    update_download_status(
+                        progress=progress,
+                        status='downloading',
+                        current_file=f"{status_msg} ({progress_info})",
+                        downloaded_bytes=downloaded_bytes
+                    )
+                
+                last_downloaded_bytes = downloaded_bytes
+                    
+            except Exception as e:
+                print(f"❌ Monitor error: {e}")
+                # Don't break on errors, just continue
+        
+        print("📊 Progress monitoring stopped")
+    
+    _monitoring_thread = threading.Thread(target=monitor, daemon=True)
+    _monitoring_thread.start()
+    print("📊 Progress monitoring started")
+
+def stop_progress_monitoring():
+    """Stop progress monitoring"""
+    global _monitoring_active
+    _monitoring_active = False
+    print("📊 Stopping progress monitoring")
 
 def get_repo_info_with_patterns(repo_id, allow_patterns=None):
     """Get repository info and calculate total expected download size"""
@@ -164,7 +229,7 @@ def get_download_status():
     return jsonify(download_status)
 
 def download_with_progress(repo_id, local_dir, allow_patterns):
-    """Download with real-time byte-based progress monitoring - fully async"""
+    """Download with simplified non-nested threading"""
     
     # Get repository info and expected size
     print(f"📊 Getting repository information...")
@@ -180,104 +245,41 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
         print(f"⚠️ Could not determine download size - progress will be estimated")
         update_download_status(current_file="Starting download...")
     
-    def download_and_monitor():
-        """Combined download and monitoring in single background thread"""
-        download_exception = None
-        
-        def download_task():
-            nonlocal download_exception
-            try:
-                # Set custom cache directory within models folder
-                cache_dir = "/models/.cache"
-                os.makedirs(cache_dir, exist_ok=True)
-                
-                snapshot_download(
-                    repo_id=repo_id,
-                    local_dir=local_dir,
-                    allow_patterns=allow_patterns,
-                    resume_download=True,
-                    local_dir_use_symlinks=False,
-                    cache_dir=cache_dir
-                )
-            except Exception as e:
-                download_exception = e
-        
-        # Start download in background thread
-        download_thread = threading.Thread(target=download_task, daemon=True)
-        download_thread.start()
-        
-        # Monitor progress while download runs
+    # Start simple progress monitoring
+    start_progress_monitoring(repo_id, local_dir, total_expected_bytes)
+    
+    # Simple download function - no nested threads
+    try:
+        # Set custom cache directory within models folder
         cache_dir = "/models/.cache"
-        last_downloaded_bytes = 0
+        os.makedirs(cache_dir, exist_ok=True)
         
-        while download_thread.is_alive():
-            time.sleep(1)  # Check every second
-            
-            try:
-                # Calculate downloaded bytes
-                downloaded_bytes = calculate_downloaded_size(local_dir, cache_dir, repo_id)
-                
-                # Calculate progress
-                if total_expected_bytes > 0:
-                    progress = min(95, (downloaded_bytes / total_expected_bytes) * 100)
-                    progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} / {get_file_size_from_bytes(total_expected_bytes)}"
-                else:
-                    # Simple estimation without expected size
-                    progress = min(95, 10 + (downloaded_bytes / (1024 * 1024 * 100)))  # Rough estimate
-                    progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} downloaded"
-                
-                # Find most recent file for status
-                current_file_name = "Processing files..."
-                try:
-                    current_files = list(Path(local_dir).rglob('*'))
-                    files = [f for f in current_files if f.is_file()]
-                    if files:
-                        latest_file = max(files, key=lambda f: f.stat().st_mtime)
-                        current_file_name = latest_file.name
-                except:
-                    pass
-                
-                # Determine if making progress
-                is_progressing = downloaded_bytes > last_downloaded_bytes
-                status_prefix = "Downloading" if is_progressing else "Processing"
-                
-                update_download_status(
-                    progress=progress,
-                    status='downloading',
-                    current_file=f"{status_prefix}: {current_file_name} ({progress_info})",
-                    downloaded_files=len(files) if 'files' in locals() else 0,
-                    downloaded_bytes=downloaded_bytes
-                )
-                
-                last_downloaded_bytes = downloaded_bytes
-                    
-            except Exception as e:
-                print(f"❌ Error monitoring progress: {e}")
-                traceback.print_exc()
+        print(f"🚀 Starting download...")
+        snapshot_download(
+            repo_id=repo_id,
+            local_dir=local_dir,
+            allow_patterns=allow_patterns,
+            resume_download=True,
+            local_dir_use_symlinks=False,
+            cache_dir=cache_dir
+        )
         
-        # Wait for download completion
-        download_thread.join()
-        print(f"✅ Download thread completed")
+        # Download completed successfully
+        print(f"✅ Download completed successfully")
+        stop_progress_monitoring()
         
-        # Handle completion or errors
-        if download_exception:
-            print(f"❌ Download failed: {download_exception}")
-            update_download_status(progress=0, status="error", current_file=f"Error: {str(download_exception)}")
-        else:
-            # Final size calculation
-            final_size = calculate_downloaded_size(local_dir, "/models/.cache", repo_id)
-            update_download_status(
-                progress=100,
-                status="completed",
-                current_file=f"Download completed! Total size: {get_file_size_from_bytes(final_size)}",
-                downloaded_bytes=final_size
-            )
-    
-    # Start the entire process in background - no blocking at all
-    process_thread = threading.Thread(target=download_and_monitor, daemon=True)
-    process_thread.start()
-    
-    # Return immediately - don't wait for anything
+        final_size = calculate_downloaded_size(local_dir, cache_dir, repo_id)
+        update_download_status(
+            progress=100,
+            status="completed",
+            current_file=f"Download completed! Total size: {get_file_size_from_bytes(final_size)}",
+            downloaded_bytes=final_size
+        )
+        
+    except Exception as e:
+        print(f"❌ Download failed: {e}")
+        stop_progress_monitoring()
+        update_download_status(progress=0, status="error", current_file=f"Error: {str(e)}")
 
 def download_model_task(repo_id, quant_pattern, operation_type="download"):
     """Unified function for downloading or updating models with progress tracking"""
