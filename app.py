@@ -36,6 +36,7 @@ def add_url_rule_with_prefix(path, endpoint, view_func, methods=None):
 # ============== SHARED UTILITIES ==============
 
 def get_file_size_from_bytes(size_bytes):
+    print(f"DEBUG H")
     """Convert bytes to human readable format"""
     if size_bytes == 0:
         return '0 B'
@@ -71,6 +72,7 @@ def validate_model_path(model_path):
 
 # Global download status with monitoring
 download_status = {
+    print(f"DEBUG I")
     "progress": 0, 
     "status": "idle", 
     "current_file": "",
@@ -87,6 +89,7 @@ _monitoring_thread = None
 
 def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
     """Start a simple progress monitoring thread"""
+    print(f"DEBUG J")
     global _monitoring_active, _monitoring_thread
     
     if _monitoring_active:
@@ -100,7 +103,7 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
         
         while _monitoring_active:
             time.sleep(1)  # Check every 1 second
-            
+            print(f"DEBUG A")
             try:
                 if not _monitoring_active:
                     break
@@ -122,6 +125,7 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
                 
                 # Update status directly - monitoring thread controls this flow
                 update_download_status(
+                    print(f"DEBUG B")
                     progress=progress,
                     status='downloading',
                     current_file=f"{status_msg} ({progress_info})",
@@ -141,6 +145,7 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
     print("📊 Progress monitoring started")
 
 def stop_progress_monitoring():
+    print(f"DEBUG K")
     """Stop progress monitoring"""
     global _monitoring_active
     _monitoring_active = False
@@ -148,6 +153,7 @@ def stop_progress_monitoring():
 
 def get_repo_info_with_patterns(repo_id, allow_patterns=None):
     """Get repository info and calculate total expected download size"""
+    print(f"DEBUG C")
     try:
         print(f"🔍 Fetching repository info for {repo_id}...")
         api = HfApi()
@@ -181,6 +187,7 @@ def get_repo_info_with_patterns(repo_id, allow_patterns=None):
         return 0, 0, None
 
 def calculate_downloaded_size(local_dir, cache_dir, repo_id):
+    print(f"DEBUG D")
     """Calculate total bytes downloaded by checking both final and cache directories"""
     total_downloaded = 0
     
@@ -207,6 +214,7 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
     return total_downloaded
 
 def update_download_status(**kwargs):
+    print(f"DEBUG E")
     """Update download status"""
     global download_status
     
@@ -221,6 +229,7 @@ def update_download_status(**kwargs):
             download_status['eta'] = eta
 
 def download_with_progress(repo_id, local_dir, allow_patterns):
+    print(f"DEBUG F")    
     """Download with progress monitoring"""
     
     # Get repository info and expected size
@@ -277,6 +286,7 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
         update_download_status(progress=0, status="error", current_file=f"Error: {str(e)}")
 
 def download_model_task(repo_id, quant_pattern):
+    print(f"DEBUG G")
     """Function for downloading or updating models with progress tracking"""
     print(f"\n=== DOWNLOAD STARTED ===")
     print(f"Repository ID: {repo_id}")
@@ -319,6 +329,7 @@ def download_model_task(repo_id, quant_pattern):
 # ============== MODEL SCANNING ==============
 
 def group_model_files(files):
+
     """Group model files by common patterns"""
     groups = defaultdict(list)
     ungrouped = []
