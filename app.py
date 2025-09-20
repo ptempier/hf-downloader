@@ -18,9 +18,15 @@ app.config['SECRET_KEY'] = 'your-secret-key'
 
 # CONFIGURATION
 base_url = "/hf-downloader"   # Set this to match your Caddy handle_path
+DEBUG_THREADS = True  # Set to False to disable thread debug prints
 
 # Set HF_TRANSFER for faster downloads
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
+# Thread heartbeat tracking
+_thread_heartbeats = {}
+_heartbeat_active = False
+_heartbeat_thread = None
 
 # Route helper function to register routes with and without base_url
 def register_route(path, methods=None, **kwargs):
@@ -92,6 +98,54 @@ download_status_lock = threading.Lock()
 _monitoring_active = False
 _monitoring_thread = None
 
+def start_thread_heartbeat():
+    """Start a heartbeat monitor that shows all active threads every second"""
+    global _heartbeat_active, _heartbeat_thread
+    
+    if not DEBUG_THREADS or _heartbeat_active:
+        return
+    
+    _heartbeat_active = True
+    
+    def heartbeat_monitor():
+        while _heartbeat_active:
+            try:
+                time.sleep(1)
+                if not _heartbeat_active:
+                    break
+                
+                # Show all active threads
+                active_threads = []
+                for thread in threading.enumerate():
+                    if thread.is_alive():
+                        status = _thread_heartbeats.get(thread.name, "no-heartbeat")
+                        active_threads.append(f"{thread.name}:{status}")
+                
+                if active_threads:
+                    print(f"💓 THREADS: {' | '.join(active_threads)}")
+                    
+            except Exception as e:
+                print(f"❌ Heartbeat monitor error: {e}")
+        
+        print("💓 Heartbeat monitor stopped")
+    
+    _heartbeat_thread = threading.Thread(target=heartbeat_monitor, daemon=True)
+    _heartbeat_thread.name = "HeartbeatMonitor"
+    _heartbeat_thread.start()
+    
+    if DEBUG_THREADS:
+        print("💓 Thread heartbeat monitor started")
+
+def stop_thread_heartbeat():
+    """Stop the heartbeat monitor"""
+    global _heartbeat_active
+    _heartbeat_active = False
+
+def update_thread_heartbeat(status):
+    """Update current thread's heartbeat status"""
+    if DEBUG_THREADS:
+        _thread_heartbeats[threading.current_thread().name] = status
+
 def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
     """Start a simple progress monitoring thread"""
     global _monitoring_active, _monitoring_thread
@@ -105,15 +159,26 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
         cache_dir = "/models/.cache"
         last_downloaded_bytes = 0
         
+        if DEBUG_THREADS:
+            print(f"🧵 [{threading.current_thread().name}] MONITORING THREAD STARTED")
+        
         while _monitoring_active:
+            if DEBUG_THREADS:
+                update_thread_heartbeat("monitoring-loop")
+                print(f"🧵 [{threading.current_thread().name}] monitoring loop iteration")
+            
             time.sleep(1)  # Check every 1 second
             
             try:
                 if not _monitoring_active:
                     break
+                
+                update_thread_heartbeat("calculating-size")
                     
                 # Simple byte calculation
                 downloaded_bytes = calculate_downloaded_size(local_dir, cache_dir, repo_id)
+                
+                update_thread_heartbeat("updating-progress")
                 
                 # Basic progress calculation
                 if total_expected_bytes > 0:
@@ -142,12 +207,17 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
                 last_downloaded_bytes = downloaded_bytes
                     
             except Exception as e:
+                update_thread_heartbeat(f"ERROR:{str(e)[:20]}")
                 print(f"❌ Monitor error: {e}")
                 # Don't break on errors, just continue
         
+        if DEBUG_THREADS:
+            print(f"🧵 [{threading.current_thread().name}] MONITORING THREAD STOPPED")
+        update_thread_heartbeat("stopped")
         print("📊 Progress monitoring stopped")
     
     _monitoring_thread = threading.Thread(target=monitor, daemon=True)
+    _monitoring_thread.name = f"MonitorThread-{repo_id.replace('/', '-')}"  # Give thread a descriptive name
     _monitoring_thread.start()
     print("📊 Progress monitoring started")
 
@@ -217,6 +287,9 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
 def update_download_status(**kwargs):
     """Thread-safe update of download status"""
     global download_status
+    if DEBUG_THREADS:
+        print(f"🧵 [{threading.current_thread().name}] update_download_status called")
+    
     with download_status_lock:
         download_status.update(kwargs)
         
@@ -234,6 +307,11 @@ def update_download_status(**kwargs):
 @register_route('/api/download/status')
 def get_download_status():
     """Get current download status - fallback for when Socket.IO disconnects"""
+    if DEBUG_THREADS:
+        print(f"🧵 [{threading.current_thread().name}] get_download_status called")
+    
+    update_thread_heartbeat("serving-status")
+    
     with download_status_lock:
         # Return a copy of the status to avoid race conditions
         return jsonify(dict(download_status))
@@ -241,9 +319,16 @@ def get_download_status():
 def download_with_progress(repo_id, local_dir, allow_patterns):
     """Download with simplified non-nested threading"""
     
+    if DEBUG_THREADS:
+        print(f"🧵 [{threading.current_thread().name}] DOWNLOAD THREAD STARTED")
+    
+    update_thread_heartbeat("getting-repo-info")
+    
     # Get repository info and expected size
     print(f"📊 Getting repository information...")
     total_expected_bytes, expected_files, repo_info = get_repo_info_with_patterns(repo_id, allow_patterns)
+    
+    update_thread_heartbeat("preparing-download")
     
     if total_expected_bytes > 0:
         print(f"✅ Expected download size: {get_file_size_from_bytes(total_expected_bytes)} ({expected_files} files)")
@@ -258,6 +343,8 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
     # Start simple progress monitoring
     start_progress_monitoring(repo_id, local_dir, total_expected_bytes)
     
+    update_thread_heartbeat("starting-monitoring")
+    
     # Simple download function - no nested threads
     try:
         # Set custom cache directory within models folder
@@ -269,6 +356,11 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
         # Update status to downloading before starting the actual download
         update_download_status(status='downloading')
         
+        if DEBUG_THREADS:
+            print(f"🧵 [{threading.current_thread().name}] CALLING snapshot_download()")
+        
+        update_thread_heartbeat("IN-snapshot_download")
+        
         snapshot_download(
             repo_id=repo_id,
             local_dir=local_dir,
@@ -278,9 +370,16 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
             cache_dir=cache_dir
         )
         
+        update_thread_heartbeat("download-completed")
+        
+        if DEBUG_THREADS:
+            print(f"🧵 [{threading.current_thread().name}] snapshot_download() COMPLETED")
+        
         # Download completed successfully
         print(f"✅ Download completed successfully")
         stop_progress_monitoring()
+        
+        update_thread_heartbeat("finalizing")
         
         final_size = calculate_downloaded_size(local_dir, cache_dir, repo_id)
         update_download_status(
@@ -291,12 +390,22 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
         )
         
     except Exception as e:
+        update_thread_heartbeat(f"ERROR:{str(e)[:20]}")
+        if DEBUG_THREADS:
+            print(f"🧵 [{threading.current_thread().name}] snapshot_download() FAILED: {e}")
         print(f"❌ Download failed: {e}")
         stop_progress_monitoring()
         update_download_status(progress=0, status="error", current_file=f"Error: {str(e)}")
+    
+    update_thread_heartbeat("finished")
+    if DEBUG_THREADS:
+        print(f"🧵 [{threading.current_thread().name}] DOWNLOAD THREAD FINISHED")
 
 def download_model_task(repo_id, quant_pattern, operation_type="download"):
     """Unified function for downloading or updating models with progress tracking"""
+    if DEBUG_THREADS:
+        print(f"🧵 [{threading.current_thread().name}] download_model_task STARTED")
+    
     print(f"\n=== {operation_type.upper()} STARTED ===")
     print(f"Repository ID: {repo_id}")
     print(f"Quantization Pattern: '{quant_pattern}'")
@@ -336,6 +445,9 @@ def download_model_task(repo_id, quant_pattern, operation_type="download"):
         tb = traceback.format_exc()
         print(f"{operation_type.capitalize()} error: {e}\n{tb}")
         update_download_status(progress=0, status="error", current_file=f"Error: {str(e)}")
+    
+    if DEBUG_THREADS:
+        print(f"🧵 [{threading.current_thread().name}] download_model_task FINISHED")
 
 # Convenience wrappers for backward compatibility
 def start_download_task(repo_id, quant_pattern):
@@ -510,6 +622,11 @@ def favicon():
 
 @register_route('/download', methods=['POST'])
 def start_download():
+    if DEBUG_THREADS:
+        print(f"🧵 [{threading.current_thread().name}] start_download called")
+    
+    update_thread_heartbeat("handling-download-request")
+    
     data = request.get_json() or {}
     repo_id = data.get('repo_id', '').strip()
     quant_pattern = data.get('quant_pattern', '').strip()
@@ -525,7 +642,15 @@ def start_download():
 
     # Start download in background thread
     download_thread = threading.Thread(target=start_download_task, args=(repo_id, quant_pattern), daemon=True)
+    download_thread.name = f"DownloadThread-{repo_id.replace('/', '-')}"  # Give thread a descriptive name
     download_thread.start()
+    
+    # Start heartbeat monitoring when first download starts
+    start_thread_heartbeat()
+    
+    if DEBUG_THREADS:
+        print(f"🧵 [{threading.current_thread().name}] Started download thread: {download_thread.name}")
+    
     return jsonify({'message': 'Download started'})
 
 @register_route('/status')
