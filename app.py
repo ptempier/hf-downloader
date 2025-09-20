@@ -69,10 +69,9 @@ def validate_model_path(model_path):
     return True
 
 # ============== DOWNLOAD MANAGEMENT ==============
-
+print(f"DEBUG I")
 # Global download status with monitoring
 download_status = {
-    print(f"DEBUG I")
     "progress": 0, 
     "status": "idle", 
     "current_file": "",
