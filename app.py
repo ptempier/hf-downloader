@@ -164,9 +164,7 @@ def get_download_status():
     return jsonify(download_status)
 
 def download_with_progress(repo_id, local_dir, allow_patterns):
-    """Download with real-time byte-based progress monitoring"""
-    
-    download_exception = [None]
+    """Download with real-time byte-based progress monitoring - fully async"""
     
     # Get repository info and expected size
     print(f"📊 Getting repository information...")
@@ -182,29 +180,37 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
         print(f"⚠️ Could not determine download size - progress will be estimated")
         update_download_status(current_file="Starting download...")
     
-    def download_thread():
-        try:
-            # Set custom cache directory within models folder
-            cache_dir = "/models/.cache"
-            os.makedirs(cache_dir, exist_ok=True)
-            
-            snapshot_download(
-                repo_id=repo_id,
-                local_dir=local_dir,
-                allow_patterns=allow_patterns,
-                resume_download=True,
-                local_dir_use_symlinks=False,
-                cache_dir=cache_dir
-            )
-        except Exception as e:
-            download_exception[0] = e
-    
-    def monitor_progress():
-        """Separate monitoring thread to avoid blocking the main thread"""
+    def download_and_monitor():
+        """Combined download and monitoring in single background thread"""
+        download_exception = None
+        
+        def download_task():
+            nonlocal download_exception
+            try:
+                # Set custom cache directory within models folder
+                cache_dir = "/models/.cache"
+                os.makedirs(cache_dir, exist_ok=True)
+                
+                snapshot_download(
+                    repo_id=repo_id,
+                    local_dir=local_dir,
+                    allow_patterns=allow_patterns,
+                    resume_download=True,
+                    local_dir_use_symlinks=False,
+                    cache_dir=cache_dir
+                )
+            except Exception as e:
+                download_exception = e
+        
+        # Start download in background thread
+        download_thread = threading.Thread(target=download_task, daemon=True)
+        download_thread.start()
+        
+        # Monitor progress while download runs
         cache_dir = "/models/.cache"
         last_downloaded_bytes = 0
         
-        while thread.is_alive():
+        while download_thread.is_alive():
             time.sleep(1)  # Check every second
             
             try:
@@ -248,24 +254,30 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
             except Exception as e:
                 print(f"❌ Error monitoring progress: {e}")
                 traceback.print_exc()
+        
+        # Wait for download completion
+        download_thread.join()
+        print(f"✅ Download thread completed")
+        
+        # Handle completion or errors
+        if download_exception:
+            print(f"❌ Download failed: {download_exception}")
+            update_download_status(progress=0, status="error", current_file=f"Error: {str(download_exception)}")
+        else:
+            # Final size calculation
+            final_size = calculate_downloaded_size(local_dir, "/models/.cache", repo_id)
+            update_download_status(
+                progress=100,
+                status="completed",
+                current_file=f"Download completed! Total size: {get_file_size_from_bytes(final_size)}",
+                downloaded_bytes=final_size
+            )
     
-    # Start download in background
-    thread = threading.Thread(target=download_thread, daemon=True)
-    thread.start()
+    # Start the entire process in background - no blocking at all
+    process_thread = threading.Thread(target=download_and_monitor, daemon=True)
+    process_thread.start()
     
-    # Start monitoring in separate background thread
-    monitor_thread = threading.Thread(target=monitor_progress, daemon=True)
-    monitor_thread.start()
-    
-    # Wait for download completion (non-blocking for other requests)
-    thread.join()
-    monitor_thread.join(timeout=5)  # Give monitor thread time to finish
-    
-    print(f"✅ Download thread completed")
-    
-    # Check for errors
-    if download_exception[0]:
-        raise download_exception[0]
+    # Return immediately - don't wait for anything
 
 def download_model_task(repo_id, quant_pattern, operation_type="download"):
     """Unified function for downloading or updating models with progress tracking"""
@@ -297,20 +309,10 @@ def download_model_task(repo_id, quant_pattern, operation_type="download"):
             current_file='Getting repository information...'
         )
 
-        # Execute download with progress monitoring
+        # Execute download with progress monitoring (fully async - returns immediately)
         download_with_progress(repo_id, local_dir, allow_patterns)
-
-        # Final size calculation
-        final_size = calculate_downloaded_size(local_dir, "/models/.cache", repo_id)
         
-        # Complete
-        completion_msg = "Download completed!" if operation_type == "download" else "Update completed!"
-        update_download_status(
-            progress=100,
-            status="completed",
-            current_file=f"{completion_msg} Total size: {get_file_size_from_bytes(final_size)}",
-            downloaded_bytes=final_size
-        )
+        # Note: Completion handling is now done inside download_with_progress()
 
     except HfHubHTTPError as e:
         update_download_status(progress=0, status="error", current_file=f"HuggingFace error: {str(e)}")
