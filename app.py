@@ -91,9 +91,6 @@ download_status = {
     "start_time": None
 }
 
-# Thread safety lock for download_status
-download_status_lock = threading.Lock()
-
 # Simple monitoring state
 _monitoring_active = False
 _monitoring_thread = None
@@ -194,17 +191,14 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
                 is_progressing = downloaded_bytes > last_downloaded_bytes
                 status_msg = "Downloading..." if is_progressing else "Processing..."
                 
-                # Single atomic operation: read status and update if needed
-                with download_status_lock:
-                    current_status = download_status["status"]
-                    if current_status == "downloading":  # Only update if still downloading
-                        # Update directly since we already hold the lock
-                        update_download_status(
-                            progress=progress,
-                            status='downloading',
-                            current_file=f"{status_msg} ({progress_info})",
-                            downloaded_bytes=downloaded_bytes
-                        )
+                # Simple check and update - no locks needed
+                if download_status["status"] == "downloading":  # Only update if still downloading
+                    update_download_status(
+                        progress=progress,
+                        status='downloading',
+                        current_file=f"{status_msg} ({progress_info})",
+                        downloaded_bytes=downloaded_bytes
+                    )
                 
                 last_downloaded_bytes = downloaded_bytes
                     
@@ -287,12 +281,12 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
     return total_downloaded
 
 def update_download_status(**kwargs):
-    """Thread-safe update of download status - internal function, assumes lock is already held or not needed"""
+    """Update download status - simplified without locks"""
     global download_status
     if DEBUG_THREADS:
         print(f"🧵 [{threading.current_thread().name}] update_download_status called")
     
-    # Direct update - caller is responsible for locking
+    # Direct update - Python dict operations are atomic enough for our use case
     download_status.update(kwargs)
     
     # Calculate ETA
@@ -305,23 +299,17 @@ def update_download_status(**kwargs):
     # Simple logging for progress tracking
     print(f"Progress: {download_status.get('progress', 0):.1f}% - {download_status.get('current_file', '')}")
 
-def safe_update_download_status(**kwargs):
-    """Thread-safe wrapper that acquires lock before updating"""
-    with download_status_lock:
-        update_download_status(**kwargs)
-
 # Add a status endpoint that clients can poll as fallback
 @register_route('/api/download/status')
 def get_download_status():
-    """Get current download status - fallback for when Socket.IO disconnects"""
+    """Get current download status"""
     if DEBUG_THREADS:
         print(f"🧵 [{threading.current_thread().name}] get_download_status called")
     
     update_thread_heartbeat("serving-status")
     
-    with download_status_lock:
-        # Return a copy of the status to avoid race conditions
-        return jsonify(dict(download_status))
+    # Return a copy of the status - no locks needed for simple dict read
+    return jsonify(dict(download_status))
 
 def download_with_progress(repo_id, local_dir, allow_patterns):
     """Download with simplified non-nested threading"""
@@ -339,13 +327,13 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
     
     if total_expected_bytes > 0:
         print(f"✅ Expected download size: {get_file_size_from_bytes(total_expected_bytes)} ({expected_files} files)")
-        safe_update_download_status(
+        update_download_status(
             total_bytes=total_expected_bytes,
             current_file=f"Expected: {get_file_size_from_bytes(total_expected_bytes)} ({expected_files} files)"
         )
     else:
         print(f"⚠️ Could not determine download size - progress will be estimated")
-        safe_update_download_status(current_file="Starting download...")
+        update_download_status(current_file="Starting download...")
     
     # Start simple progress monitoring
     start_progress_monitoring(repo_id, local_dir, total_expected_bytes)
@@ -361,7 +349,7 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
         print(f"🚀 Starting download...")
         
         # Update status to downloading before starting the actual download
-        safe_update_download_status(status='downloading')
+        update_download_status(status='downloading')
         
         if DEBUG_THREADS:
             print(f"🧵 [{threading.current_thread().name}] CALLING snapshot_download()")
@@ -389,7 +377,7 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
         update_thread_heartbeat("finalizing")
         
         final_size = calculate_downloaded_size(local_dir, cache_dir, repo_id)
-        safe_update_download_status(
+        update_download_status(
             progress=100,
             status="completed",
             current_file=f"Download completed! Total size: {get_file_size_from_bytes(final_size)}",
@@ -402,7 +390,7 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
             print(f"🧵 [{threading.current_thread().name}] snapshot_download() FAILED: {e}")
         print(f"❌ Download failed: {e}")
         stop_progress_monitoring()
-        safe_update_download_status(progress=0, status="error", current_file=f"Error: {str(e)}")
+        update_download_status(progress=0, status="error", current_file=f"Error: {str(e)}")
     
     update_thread_heartbeat("finished")
     if DEBUG_THREADS:
@@ -419,7 +407,7 @@ def download_model_task(repo_id, quant_pattern, operation_type="download"):
 
     try:
         # Reset and initialize status
-        safe_update_download_status(
+        update_download_status(
             progress=0,
             status="starting",
             current_file=f"Initializing {operation_type}...",
@@ -435,7 +423,7 @@ def download_model_task(repo_id, quant_pattern, operation_type="download"):
 
         allow_patterns = [f"*{quant_pattern}*"] if quant_pattern.strip() else None
 
-        safe_update_download_status(
+        update_download_status(
             progress=5,
             status='downloading',
             current_file='Getting repository information...'
@@ -447,11 +435,11 @@ def download_model_task(repo_id, quant_pattern, operation_type="download"):
         # Note: Completion handling is now done inside download_with_progress()
 
     except HfHubHTTPError as e:
-        safe_update_download_status(progress=0, status="error", current_file=f"HuggingFace error: {str(e)}")
+        update_download_status(progress=0, status="error", current_file=f"HuggingFace error: {str(e)}")
     except Exception as e:
         tb = traceback.format_exc()
         print(f"{operation_type.capitalize()} error: {e}\n{tb}")
-        safe_update_download_status(progress=0, status="error", current_file=f"Error: {str(e)}")
+        update_download_status(progress=0, status="error", current_file=f"Error: {str(e)}")
     
     if DEBUG_THREADS:
         print(f"🧵 [{threading.current_thread().name}] download_model_task FINISHED")
@@ -662,8 +650,8 @@ def start_download():
 
 @register_route('/status')
 def get_status():
-    with download_status_lock:
-        return jsonify(dict(download_status))
+    # Simple read - no locks needed
+    return jsonify(dict(download_status))
 
 @register_route('/api/models')
 def api_models():
