@@ -123,8 +123,8 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
                 status_msg = "Downloading..." if is_progressing else "Processing..."
                 
                 # Update status directly - monitoring thread controls this flow
+                print(f"DEBUG B")                
                 update_download_status(
-                    print(f"DEBUG B")
                     progress=progress,
                     status='downloading',
                     current_file=f"{status_msg} ({progress_info})",
