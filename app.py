@@ -163,8 +163,10 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
             print(f"🧵 [{threading.current_thread().name}] MONITORING THREAD STARTED")
         
         while _monitoring_active:
+            # Update heartbeat at the start of each loop iteration
+            update_thread_heartbeat("monitoring-loop")
+            
             if DEBUG_THREADS:
-                update_thread_heartbeat("monitoring-loop")
                 print(f"🧵 [{threading.current_thread().name}] monitoring loop iteration")
             
             time.sleep(1)  # Check every 1 second
