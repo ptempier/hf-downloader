@@ -107,7 +107,10 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
                     break
                     
                 # Simple byte calculation
+                start_time = time.time()
                 downloaded_bytes = calculate_downloaded_size(local_dir, cache_dir, repo_id)
+                calculation_time = time.time() - start_time
+                print(f"⏱️ File size calculation took: {calculation_time:.3f} seconds")
                 
                 # Basic progress calculation
                 if total_expected_bytes > 0:
@@ -187,9 +190,11 @@ def get_repo_info_with_patterns(repo_id, allow_patterns=None):
 def calculate_downloaded_size(local_dir, cache_dir, repo_id):
     print(f"DEBUG D")
     """Calculate total bytes downloaded by checking both final and cache directories"""
+    start_total = time.time()
     total_downloaded = 0
     
     # Check final destination files
+    start_local = time.time()
     if os.path.exists(local_dir):
         local_path = Path(local_dir)
         for file_path in local_path.rglob('*'):
@@ -198,8 +203,11 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
                     total_downloaded += file_path.stat().st_size
                 except (OSError, IOError):
                     continue
+    local_time = time.time() - start_local
+    print(f"⏱️ Local dir scan took: {local_time:.3f} seconds")
     
     # Check cache for incomplete files and blobs
+    start_cache = time.time()
     cache_repo_dir = Path(cache_dir) / f"models--{repo_id.replace('/', '--')}"
     if cache_repo_dir.exists():
         for file_path in cache_repo_dir.rglob('*'):
@@ -208,6 +216,11 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
                     total_downloaded += file_path.stat().st_size
                 except (OSError, IOError):
                     continue
+    cache_time = time.time() - start_cache
+    print(f"⏱️ Cache dir scan took: {cache_time:.3f} seconds")
+    
+    total_time = time.time() - start_total
+    print(f"⏱️ Total size calculation took: {total_time:.3f} seconds (found {get_file_size_from_bytes(total_downloaded)})")
     
     return total_downloaded
 
