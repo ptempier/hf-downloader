@@ -36,7 +36,6 @@ def add_url_rule_with_prefix(path, endpoint, view_func, methods=None):
 # ============== SHARED UTILITIES ==============
 
 def get_file_size_from_bytes(size_bytes):
-    print(f"DEBUG H")
     """Convert bytes to human readable format"""
     if size_bytes == 0:
         return '0 B'
@@ -88,7 +87,7 @@ _monitoring_thread = None
 
 def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
     """Start a simple progress monitoring thread"""
-    print(f"DEBUG J")
+    print(f"DEBUG Start a simple progress monitoring")
     global _monitoring_active, _monitoring_thread
     
     if _monitoring_active:
@@ -102,7 +101,7 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
         
         while _monitoring_active:
             time.sleep(1)  # Check every 1 second
-            print(f"DEBUG A")
+            print(f"DEBUG Check every 1 second _monitoring_active")
             try:
                 if not _monitoring_active:
                     break
