@@ -92,7 +92,7 @@ def monitoring_service_process(status_queue, monitor_requests_queue):
                 print(f"📊 Progress: {progress:.1f}% - {progress_info}")
             
             # Sleep for monitoring interval
-            time.sleep(2)  # Monitor every 2 seconds
+            time.sleep(3)  # Monitor every 3 seconds
             
         except Exception as e:
             print(f"❌ Error in monitoring service: {e}")

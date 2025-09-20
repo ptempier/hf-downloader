@@ -29,9 +29,11 @@ docker build -t "$IMG:$TAG" .
 
 echo "#==== docker tag"
 docker tag "$IMG:$TAG" "$REPO/$IMG:$TAG" 
+docker tag "$IMG:$TAG" "$REPO/$IMG:latest" 
 
 echo "#==== docker push"
 docker push "$REPO/$IMG:$TAG"
+docker push "$REPO/$IMG:latest"
 
 echo "#==== update version"
 TAG=$(( $TAG + 1 ))

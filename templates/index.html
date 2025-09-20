@@ -367,6 +367,13 @@
             </div>
         </div>
         
+        <!-- Console Section -->
+        <div class="section">
+            <h2>🖥️ Console</h2>
+            <div id="console" class="console">Ready...</div>
+            <button id="clearConsole" class="btn btn-sm" style="margin-top: 1rem;">Clear Console</button>
+        </div>
+        
         <!-- Models Section -->
         <div class="section">
             <h2>📁 Model Manager</h2>
@@ -383,13 +390,6 @@
             <div id="modelsContainer">
                 <!-- Models will be loaded here -->
             </div>
-        </div>
-        
-        <!-- Console Section -->
-        <div class="section">
-            <h2>🖥️ Console</h2>
-            <div id="console" class="console">Ready...</div>
-            <button id="clearConsole" class="btn btn-sm" style="margin-top: 1rem;">Clear Console</button>
         </div>
     </div>
     
@@ -439,7 +439,7 @@
                 } catch (error) {
                     console.warn('Polling failed:', error);
                 }
-            }, 1000); // Poll every 1 second
+            }, 3000); // Poll every 3 seconds
         }
         
         function stopPolling() {

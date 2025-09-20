@@ -243,7 +243,7 @@ def status_update_processor(status_queue, response_queue, app_state, monitor_req
                 
         except Exception as e:
             print(f"❌ Error in status processor: {e}")
-            time.sleep(1)
+            time.sleep(3)
 
 
 # ============== MAIN ORCHESTRATOR ==============
