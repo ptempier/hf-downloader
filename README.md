@@ -197,9 +197,15 @@ hf_transfer==0.1.4
 - **Production**: Docker with resource limits and health checks
 
 ### Testing
-Use the included test script:
+Test the API endpoints manually:
 ```bash
-python3 test_status.py
+# Check status
+curl http://localhost:5000/api/download/status
+
+# Start a download
+curl -X POST http://localhost:5000/download \
+  -H "Content-Type: application/json" \
+  -d '{"repo_id":"microsoft/DialoGPT-small","quant_pattern":""}'
 ```
 
 ## Troubleshooting
