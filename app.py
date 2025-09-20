@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 
-# eventlet must monkey-patch the stdlib before other libraries (Flask/werkzeug)
-import eventlet
-eventlet.monkey_patch()
-
 from flask import Flask, render_template, request, jsonify
-from flask_socketio import SocketIO
 import os
 import traceback
 import threading
@@ -23,10 +18,6 @@ app.config['SECRET_KEY'] = 'your-secret-key'
 
 # CONFIGURATION
 base_url = "/hf-downloader"   # Set this to match your Caddy handle_path
-
-# Configure Socket.IO - for Caddy handle_path, use root path since Caddy strips the prefix
-socketio_path = "/socket.io"  # Caddy strips /hf-downloader, so Flask sees root paths
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', path=socketio_path)
 
 # Set HF_TRANSFER for faster downloads
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
@@ -152,7 +143,7 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
     return total_downloaded
 
 def update_download_status(**kwargs):
-    """Thread-safe update of download status with auto-emit"""
+    """Thread-safe update of download status"""
     global download_status
     download_status.update(kwargs)
     
@@ -163,13 +154,8 @@ def update_download_status(**kwargs):
             eta = (elapsed / download_status['progress']) * (100 - download_status['progress'])
             download_status['eta'] = eta
     
-    try:
-        # Emit to all connected clients with resilience
-        socketio.emit('download_progress', download_status.copy(), broadcast=True)
-        print(f"Progress: {download_status.get('progress', 0):.1f}% - {download_status.get('current_file', '')}")
-    except Exception as e:
-        # Continue silently on connection errors during downloads
-        print(f"Socket emission failed (client may have disconnected): {e}")
+    # Simple logging for progress tracking
+    print(f"Progress: {download_status.get('progress', 0):.1f}% - {download_status.get('current_file', '')}")
 
 # Add a status endpoint that clients can poll as fallback
 @register_route('/api/download/status')
@@ -186,20 +172,15 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
     print(f"📊 Getting repository information...")
     total_expected_bytes, expected_files, repo_info = get_repo_info_with_patterns(repo_id, allow_patterns)
     
-    # Use file-count fallback if we can't get byte info
-    use_byte_progress = total_expected_bytes > 0
-    
-    if use_byte_progress:
-        print(f"✅ Using byte-based progress tracking")
+    if total_expected_bytes > 0:
+        print(f"✅ Expected download size: {get_file_size_from_bytes(total_expected_bytes)} ({expected_files} files)")
         update_download_status(
             total_bytes=total_expected_bytes,
             current_file=f"Expected: {get_file_size_from_bytes(total_expected_bytes)} ({expected_files} files)"
         )
     else:
-        print(f"⚠️ Using file-count progress tracking (couldn't get total size)")
-        update_download_status(
-            current_file="Starting download (size unknown)..."
-        )
+        print(f"⚠️ Could not determine download size - progress will be estimated")
+        update_download_status(current_file="Starting download...")
     
     def download_thread():
         try:
@@ -222,45 +203,30 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
     thread = threading.Thread(target=download_thread, daemon=True)
     thread.start()
     
-    # Monitor progress
+    # Monitor progress - simplified byte-only tracking
     cache_dir = "/models/.cache"
     last_downloaded_bytes = 0
-    last_file_count = 0
-    progress = 10  # Start at 10% for file-count fallback
     
     while thread.is_alive():
-        time.sleep(1)  # Check every second for responsive updates
+        time.sleep(1)  # Check every second
         
         try:
-            # Count files in destination
-            current_files = list(Path(local_dir).rglob('*'))
-            file_count = len([f for f in current_files if f.is_file()])
+            # Calculate downloaded bytes
+            downloaded_bytes = calculate_downloaded_size(local_dir, cache_dir, repo_id)
             
-            # Calculate progress and info
-            if use_byte_progress:
-                downloaded_bytes = calculate_downloaded_size(local_dir, cache_dir, repo_id)
-                
-                if downloaded_bytes > 0 and total_expected_bytes > 0:
-                    progress = min(95, (downloaded_bytes / total_expected_bytes) * 100)
-                    progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} / {get_file_size_from_bytes(total_expected_bytes)}"
-                else:
-                    progress = min(95, 10 + (file_count * 3))
-                    progress_info = f"{file_count} files"
-                
-                update_download_status(downloaded_bytes=downloaded_bytes)
+            # Calculate progress
+            if total_expected_bytes > 0:
+                progress = min(95, (downloaded_bytes / total_expected_bytes) * 100)
+                progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} / {get_file_size_from_bytes(total_expected_bytes)}"
             else:
-                # File-count fallback
-                if file_count > last_file_count:
-                    progress = min(95, progress + 5)
-                elif progress < 90:
-                    progress = min(90, progress + 1)
-                
-                progress_info = f"{file_count} files downloaded"
-                downloaded_bytes = 0
+                # Simple estimation without expected size
+                progress = min(95, 10 + (downloaded_bytes / (1024 * 1024 * 100)))  # Rough estimate
+                progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} downloaded"
             
             # Find most recent file for status
             current_file_name = "Processing files..."
             try:
+                current_files = list(Path(local_dir).rglob('*'))
                 files = [f for f in current_files if f.is_file()]
                 if files:
                     latest_file = max(files, key=lambda f: f.stat().st_mtime)
@@ -269,20 +235,18 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
                 pass
             
             # Determine if making progress
-            is_progressing = (use_byte_progress and downloaded_bytes > last_downloaded_bytes) or file_count > last_file_count
+            is_progressing = downloaded_bytes > last_downloaded_bytes
             status_prefix = "Downloading" if is_progressing else "Processing"
             
             update_download_status(
                 progress=progress,
                 status='downloading',
                 current_file=f"{status_prefix}: {current_file_name} ({progress_info})",
-                downloaded_files=file_count
+                downloaded_files=len(files) if 'files' in locals() else 0,
+                downloaded_bytes=downloaded_bytes
             )
             
-            # Update counters for next iteration
-            if use_byte_progress:
-                last_downloaded_bytes = downloaded_bytes
-            last_file_count = file_count
+            last_downloaded_bytes = downloaded_bytes
                 
         except Exception as e:
             print(f"❌ Error monitoring progress: {e}")
@@ -533,8 +497,8 @@ def start_download():
     if download_status["status"] == "downloading":
         return jsonify({'error': 'Download already in progress'}), 400
 
-    # Start download in background
-    socketio.start_background_task(start_download_task, repo_id, quant_pattern)
+    # Start download in background thread
+    threading.Thread(target=start_download_task, args=(repo_id, quant_pattern), daemon=True).start()
     return jsonify({'message': 'Download started'})
 
 @register_route('/status')
@@ -578,26 +542,6 @@ def api_delete_model():
     except Exception as e:
         return jsonify({'error': f'Error deleting model: {str(e)}'}), 500
 
-# ============== SOCKET.IO EVENTS ==============
-
-@socketio.on('connect')
-def handle_connect():
-    """Send current status when client connects"""
-    print(f"🔌 Client connected: {request.sid}")
-    # Send current download status to newly connected client
-    socketio.emit('download_progress', download_status.copy(), room=request.sid)
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    """Handle client disconnect"""
-    print(f"🔌 Client disconnected: {request.sid}")
-
-@socketio.on('request_status')
-def handle_status_request():
-    """Client can request current status"""
-    print(f"📊 Status requested by: {request.sid}")
-    socketio.emit('download_progress', download_status.copy(), room=request.sid)
-
 # ============== MAIN ==============
 
 if __name__ == '__main__':
@@ -609,11 +553,9 @@ if __name__ == '__main__':
     print(f"🗂️ Cache Directory: /models/.cache/")
     if base_url:
         print(f"🌍 Client Base URL: {base_url}")
-        print(f"🔌 Socket.IO Server Path: {socketio_path}")
-        print(f"📡 Socket.IO Client Path: {base_url}/socket.io")
-        print("📝 Note: Using Caddy handle_path configuration")
+        print("� Using HTTP polling for progress updates")
     print("="*50)
 
     os.makedirs("/models", exist_ok=True)
     os.makedirs("/models/.cache", exist_ok=True)
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000)
