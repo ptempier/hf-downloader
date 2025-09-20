@@ -101,11 +101,18 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
         
         while _monitoring_active:
             loop_start = time.time()
-            print(f"🔄 Monitor loop starting at {time.strftime('%H:%M:%S')}")
+            print(f"🔄 Monitor loop starting at {time.strftime('%H:%M:%S')} (epoch: {loop_start:.3f})")
             
-            time.sleep(1)  # Check every 1 second
+            # Test if time.sleep is working correctly
+            sleep_start = time.time()
+            time.sleep(1)  # Check every 1s
             sleep_end = time.time()
-            print(f"😴 Sleep completed in {sleep_end - loop_start:.3f}s")
+            actual_sleep_time = sleep_end - sleep_start
+            print(f"😴 Sleep completed in {actual_sleep_time:.3f}s (expected: 1.000s)")
+            
+            # Alert if sleep took much longer than expected
+            if actual_sleep_time > 10.0:
+                print(f"🚨 WARNING: Sleep took {actual_sleep_time:.3f}s - system may be under load!")
             
             print(f"DEBUG Check every 1 second _monitoring_active")
             try:
