@@ -197,6 +197,7 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
                 # Check if download is still active (thread-safe check)
                 with download_status_lock:
                     current_status = download_status["status"]
+                # Lock is now released before calling update_download_status()
                 
                 if current_status == "downloading":  # Only update if still downloading
                     update_download_status(
