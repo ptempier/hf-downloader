@@ -24,7 +24,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Copy application code
 COPY *.py ./
+COPY *.sh ./
 COPY templates/ ./templates/
+RUN chmod +x *.sh
 #COPY static/ ./static/
 
 # Create models directory
@@ -43,5 +45,5 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:5000/ || exit 1
 
-# Default command runs the main app
-CMD ["python", "app.py"]
+# Default command runs with Gunicorn for better performance
+CMD ["./start_gunicorn.sh"]
