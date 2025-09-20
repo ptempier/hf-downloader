@@ -199,63 +199,71 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
         except Exception as e:
             download_exception[0] = e
     
+    def monitor_progress():
+        """Separate monitoring thread to avoid blocking the main thread"""
+        cache_dir = "/models/.cache"
+        last_downloaded_bytes = 0
+        
+        while thread.is_alive():
+            time.sleep(1)  # Check every second
+            
+            try:
+                # Calculate downloaded bytes
+                downloaded_bytes = calculate_downloaded_size(local_dir, cache_dir, repo_id)
+                
+                # Calculate progress
+                if total_expected_bytes > 0:
+                    progress = min(95, (downloaded_bytes / total_expected_bytes) * 100)
+                    progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} / {get_file_size_from_bytes(total_expected_bytes)}"
+                else:
+                    # Simple estimation without expected size
+                    progress = min(95, 10 + (downloaded_bytes / (1024 * 1024 * 100)))  # Rough estimate
+                    progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} downloaded"
+                
+                # Find most recent file for status
+                current_file_name = "Processing files..."
+                try:
+                    current_files = list(Path(local_dir).rglob('*'))
+                    files = [f for f in current_files if f.is_file()]
+                    if files:
+                        latest_file = max(files, key=lambda f: f.stat().st_mtime)
+                        current_file_name = latest_file.name
+                except:
+                    pass
+                
+                # Determine if making progress
+                is_progressing = downloaded_bytes > last_downloaded_bytes
+                status_prefix = "Downloading" if is_progressing else "Processing"
+                
+                update_download_status(
+                    progress=progress,
+                    status='downloading',
+                    current_file=f"{status_prefix}: {current_file_name} ({progress_info})",
+                    downloaded_files=len(files) if 'files' in locals() else 0,
+                    downloaded_bytes=downloaded_bytes
+                )
+                
+                last_downloaded_bytes = downloaded_bytes
+                    
+            except Exception as e:
+                print(f"❌ Error monitoring progress: {e}")
+                traceback.print_exc()
+    
     # Start download in background
     thread = threading.Thread(target=download_thread, daemon=True)
     thread.start()
     
-    # Monitor progress - simplified byte-only tracking
-    cache_dir = "/models/.cache"
-    last_downloaded_bytes = 0
+    # Start monitoring in separate background thread
+    monitor_thread = threading.Thread(target=monitor_progress, daemon=True)
+    monitor_thread.start()
     
-    while thread.is_alive():
-        time.sleep(1)  # Check every second
-        
-        try:
-            # Calculate downloaded bytes
-            downloaded_bytes = calculate_downloaded_size(local_dir, cache_dir, repo_id)
-            
-            # Calculate progress
-            if total_expected_bytes > 0:
-                progress = min(95, (downloaded_bytes / total_expected_bytes) * 100)
-                progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} / {get_file_size_from_bytes(total_expected_bytes)}"
-            else:
-                # Simple estimation without expected size
-                progress = min(95, 10 + (downloaded_bytes / (1024 * 1024 * 100)))  # Rough estimate
-                progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} downloaded"
-            
-            # Find most recent file for status
-            current_file_name = "Processing files..."
-            try:
-                current_files = list(Path(local_dir).rglob('*'))
-                files = [f for f in current_files if f.is_file()]
-                if files:
-                    latest_file = max(files, key=lambda f: f.stat().st_mtime)
-                    current_file_name = latest_file.name
-            except:
-                pass
-            
-            # Determine if making progress
-            is_progressing = downloaded_bytes > last_downloaded_bytes
-            status_prefix = "Downloading" if is_progressing else "Processing"
-            
-            update_download_status(
-                progress=progress,
-                status='downloading',
-                current_file=f"{status_prefix}: {current_file_name} ({progress_info})",
-                downloaded_files=len(files) if 'files' in locals() else 0,
-                downloaded_bytes=downloaded_bytes
-            )
-            
-            last_downloaded_bytes = downloaded_bytes
-                
-        except Exception as e:
-            print(f"❌ Error monitoring progress: {e}")
-            traceback.print_exc()
+    # Wait for download completion (non-blocking for other requests)
+    thread.join()
+    monitor_thread.join(timeout=5)  # Give monitor thread time to finish
     
     print(f"✅ Download thread completed")
     
-    # Wait for completion and check for errors
-    thread.join()
+    # Check for errors
     if download_exception[0]:
         raise download_exception[0]
 
@@ -558,4 +566,4 @@ if __name__ == '__main__':
 
     os.makedirs("/models", exist_ok=True)
     os.makedirs("/models/.cache", exist_ok=True)
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)
