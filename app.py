@@ -85,6 +85,9 @@ download_status = {
     "start_time": None
 }
 
+# Thread safety lock for download_status
+download_status_lock = threading.Lock()
+
 # Simple monitoring state
 _monitoring_active = False
 _monitoring_thread = None
@@ -103,7 +106,7 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
         last_downloaded_bytes = 0
         
         while _monitoring_active:
-            time.sleep(3)  # Check every 3 seconds (less frequent)
+            time.sleep(1)  # Check every 1 second
             
             try:
                 if not _monitoring_active:
@@ -124,7 +127,11 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
                 is_progressing = downloaded_bytes > last_downloaded_bytes
                 status_msg = "Downloading..." if is_progressing else "Processing..."
                 
-                if download_status["status"] == "downloading":  # Only update if still downloading
+                # Check if download is still active (thread-safe check)
+                with download_status_lock:
+                    current_status = download_status["status"]
+                
+                if current_status == "downloading":  # Only update if still downloading
                     update_download_status(
                         progress=progress,
                         status='downloading',
@@ -210,23 +217,26 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
 def update_download_status(**kwargs):
     """Thread-safe update of download status"""
     global download_status
-    download_status.update(kwargs)
-    
-    # Calculate ETA
-    if download_status.get('start_time') and download_status.get('progress', 0) > 0:
-        elapsed = time.time() - download_status['start_time']
-        if download_status['progress'] > 0:
-            eta = (elapsed / download_status['progress']) * (100 - download_status['progress'])
-            download_status['eta'] = eta
-    
-    # Simple logging for progress tracking
-    print(f"Progress: {download_status.get('progress', 0):.1f}% - {download_status.get('current_file', '')}")
+    with download_status_lock:
+        download_status.update(kwargs)
+        
+        # Calculate ETA
+        if download_status.get('start_time') and download_status.get('progress', 0) > 0:
+            elapsed = time.time() - download_status['start_time']
+            if download_status['progress'] > 0:
+                eta = (elapsed / download_status['progress']) * (100 - download_status['progress'])
+                download_status['eta'] = eta
+        
+        # Simple logging for progress tracking
+        print(f"Progress: {download_status.get('progress', 0):.1f}% - {download_status.get('current_file', '')}")
 
 # Add a status endpoint that clients can poll as fallback
 @register_route('/api/download/status')
 def get_download_status():
     """Get current download status - fallback for when Socket.IO disconnects"""
-    return jsonify(download_status)
+    with download_status_lock:
+        # Return a copy of the status to avoid race conditions
+        return jsonify(dict(download_status))
 
 def download_with_progress(repo_id, local_dir, allow_patterns):
     """Download with simplified non-nested threading"""
@@ -255,6 +265,10 @@ def download_with_progress(repo_id, local_dir, allow_patterns):
         os.makedirs(cache_dir, exist_ok=True)
         
         print(f"🚀 Starting download...")
+        
+        # Update status to downloading before starting the actual download
+        update_download_status(status='downloading')
+        
         snapshot_download(
             repo_id=repo_id,
             local_dir=local_dir,
@@ -510,12 +524,14 @@ def start_download():
         return jsonify({'error': 'Download already in progress'}), 400
 
     # Start download in background thread
-    threading.Thread(target=start_download_task, args=(repo_id, quant_pattern), daemon=True).start()
+    download_thread = threading.Thread(target=start_download_task, args=(repo_id, quant_pattern), daemon=True)
+    download_thread.start()
     return jsonify({'message': 'Download started'})
 
 @register_route('/status')
 def get_status():
-    return jsonify(download_status)
+    with download_status_lock:
+        return jsonify(dict(download_status))
 
 @register_route('/api/models')
 def api_models():
