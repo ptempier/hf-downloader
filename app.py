@@ -100,10 +100,17 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
         last_downloaded_bytes = 0
         
         while _monitoring_active:
+            loop_start = time.time()
+            print(f"🔄 Monitor loop starting at {time.strftime('%H:%M:%S')}")
+            
             time.sleep(1)  # Check every 1 second
+            sleep_end = time.time()
+            print(f"😴 Sleep completed in {sleep_end - loop_start:.3f}s")
+            
             print(f"DEBUG Check every 1 second _monitoring_active")
             try:
                 if not _monitoring_active:
+                    print("🛑 Monitoring inactive, breaking")
                     break
                     
                 # Simple byte calculation
@@ -113,6 +120,7 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
                 print(f"⏱️ File size calculation took: {calculation_time:.3f} seconds")
                 
                 # Basic progress calculation
+                progress_start = time.time()
                 if total_expected_bytes > 0:
                     progress = min(95, (downloaded_bytes / total_expected_bytes) * 100)
                     progress_info = f"{get_file_size_from_bytes(downloaded_bytes)} / {get_file_size_from_bytes(total_expected_bytes)}"
@@ -123,20 +131,29 @@ def start_progress_monitoring(repo_id, local_dir, total_expected_bytes):
                 # Simple status update
                 is_progressing = downloaded_bytes > last_downloaded_bytes
                 status_msg = "Downloading..." if is_progressing else "Processing..."
+                progress_calc_time = time.time() - progress_start
+                print(f"📊 Progress calculation took: {progress_calc_time:.3f}s")
                 
                 # Update status directly - monitoring thread controls this flow
-                print(f"DEBUG B")                
+                print(f"DEBUG B")
+                status_update_start = time.time()                
                 update_download_status(
                     progress=progress,
                     status='downloading',
                     current_file=f"{status_msg} ({progress_info})",
                     downloaded_bytes=downloaded_bytes
                 )
+                status_update_time = time.time() - status_update_start
+                print(f"📤 Status update took: {status_update_time:.3f}s")
                 
                 last_downloaded_bytes = downloaded_bytes
+                
+                total_loop_time = time.time() - loop_start
+                print(f"🔄 Complete loop took: {total_loop_time:.3f}s")
                     
             except Exception as e:
                 print(f"❌ Monitor error: {e}")
+                traceback.print_exc()
                 # Don't break on errors, just continue
         
         print("📊 Progress monitoring stopped")
@@ -192,6 +209,8 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
     """Calculate total bytes downloaded by checking both final and cache directories"""
     start_total = time.time()
     total_downloaded = 0
+    local_files_count = 0
+    cache_files_count = 0
     
     # Check final destination files
     start_local = time.time()
@@ -201,10 +220,11 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
             if file_path.is_file():
                 try:
                     total_downloaded += file_path.stat().st_size
+                    local_files_count += 1
                 except (OSError, IOError):
                     continue
     local_time = time.time() - start_local
-    print(f"⏱️ Local dir scan took: {local_time:.3f} seconds")
+    print(f"⏱️ Local dir scan: {local_time:.3f}s ({local_files_count} files)")
     
     # Check cache for incomplete files and blobs
     start_cache = time.time()
@@ -214,13 +234,14 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
             if file_path.is_file():
                 try:
                     total_downloaded += file_path.stat().st_size
+                    cache_files_count += 1
                 except (OSError, IOError):
                     continue
     cache_time = time.time() - start_cache
-    print(f"⏱️ Cache dir scan took: {cache_time:.3f} seconds")
+    print(f"⏱️ Cache dir scan: {cache_time:.3f}s ({cache_files_count} files)")
     
     total_time = time.time() - start_total
-    print(f"⏱️ Total size calculation took: {total_time:.3f} seconds (found {get_file_size_from_bytes(total_downloaded)})")
+    print(f"⏱️ TIMING BREAKDOWN: Local={local_time:.3f}s, Cache={cache_time:.3f}s, Total={total_time:.3f}s ({get_file_size_from_bytes(total_downloaded)})")
     
     return total_downloaded
 
