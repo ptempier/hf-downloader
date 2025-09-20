@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   hf-downloader:
-    build: .
+    image: hf-downloader:latest  # Use pre-built image
     container_name: hf-model-downloader
     ports:
       - "5000:5000"  # Single port for both interfaces
@@ -11,8 +11,8 @@ services:
       - hf-cache:/home/appuser/.cache/huggingface  # Cache HuggingFace models
     environment:
       - HF_HUB_ENABLE_HF_TRANSFER=1
-      # Use single worker with threads for proper state sharing
-      - GUNICORN_CMD_ARGS=--workers 2 --threads 8 --worker-class gthread
+      # Multi-process architecture - no Gunicorn needed
+      # - GUNICORN_CMD_ARGS removed for multi-process mode
       # Optional: Add your HuggingFace token for private models
       # - HF_TOKEN=your_hf_token_here
     restart: unless-stopped
@@ -23,14 +23,15 @@ services:
       retries: 3
       start_period: 10s
     # Resource limits (adjust based on your needs)
+    # Increased CPU limit for multi-process architecture
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 4G
+          cpus: '4.0'  # More CPU for 4 processes
+          memory: 6G   # More memory for process isolation
         reservations:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '1.0'  # Higher reservation for stable performance
+          memory: 1G
 
 volumes:
   hf-cache:
