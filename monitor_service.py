@@ -10,58 +10,8 @@ import time
 import traceback
 from pathlib import Path
 
-
-def get_file_size_from_bytes(size_bytes):
-    """Convert bytes to human readable format"""
-    if size_bytes == 0:
-        return '0 B'
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-        if size_bytes < 1024.0:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024.0
-    return f"{size_bytes:.1f} PB"
-
-
-def calculate_downloaded_size(local_dir, cache_dir, repo_id):
-    """Calculate total bytes downloaded by checking both final and cache directories"""
-    start_total = time.time()
-    total_downloaded = 0
-    local_files_count = 0
-    cache_files_count = 0
-    
-    # Check final destination files
-    start_local = time.time()
-    if os.path.exists(local_dir):
-        local_path = Path(local_dir)
-        for file_path in local_path.rglob('*'):
-            if file_path.is_file():
-                try:
-                    total_downloaded += file_path.stat().st_size
-                    local_files_count += 1
-                except (OSError, IOError):
-                    continue
-    local_time = time.time() - start_local
-    
-    # Check cache for incomplete files and blobs
-    start_cache = time.time()
-    cache_repo_dir = Path(cache_dir) / f"models--{repo_id.replace('/', '--')}"
-    if cache_repo_dir.exists():
-        for file_path in cache_repo_dir.rglob('*'):
-            if file_path.is_file():
-                try:
-                    total_downloaded += file_path.stat().st_size
-                    cache_files_count += 1
-                except (OSError, IOError):
-                    continue
-    cache_time = time.time() - start_cache
-    
-    total_time = time.time() - start_total
-    
-    print(f"⏱️ Monitor scan: Local={local_time:.3f}s ({local_files_count} files), "
-          f"Cache={cache_time:.3f}s ({cache_files_count} files), "
-          f"Total={total_time:.3f}s ({get_file_size_from_bytes(total_downloaded)})")
-    
-    return total_downloaded
+# Import shared utilities
+from utils import get_file_size_from_bytes, calculate_downloaded_size
 
 
 def monitoring_service_process(status_queue, monitor_requests_queue):

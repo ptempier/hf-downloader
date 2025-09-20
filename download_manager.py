@@ -13,40 +13,8 @@ from pathlib import Path
 from huggingface_hub import snapshot_download, HfApi
 from huggingface_hub.utils import HfHubHTTPError
 
-
-def get_file_size_from_bytes(size_bytes):
-    """Convert bytes to human readable format"""
-    if size_bytes == 0:
-        return '0 B'
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-        if size_bytes < 1024.0:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024.0
-    return f"{size_bytes:.1f} PB"
-
-
-def validate_repo_id(repo_id):
-    """Validate repository ID format"""
-    if not repo_id or not isinstance(repo_id, str):
-        return False
-    if '/' not in repo_id or ' ' in repo_id:
-        return False
-    parts = repo_id.split('/')
-    if len(parts) != 2 or not all(parts):
-        return False
-    return True
-
-
-def validate_model_path(model_path):
-    """Validate that the model path is safe to delete"""
-    if not model_path or not isinstance(model_path, str):
-        return False
-    if not model_path.startswith('/models/'):
-        return False
-    normalized_path = os.path.normpath(model_path)
-    if not normalized_path.startswith('/models/') or normalized_path in ['/models', '/models/']:
-        return False
-    return True
+# Import shared utilities
+from utils import get_file_size_from_bytes, validate_repo_id, validate_model_path
 
 
 def get_repo_info_with_patterns(repo_id, allow_patterns=None):

@@ -46,8 +46,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:5000/hf-downloader/ || exit 1
 
 # Default command runs multi-process architecture (no Gunicorn needed)
-# Use start_gunicorn.sh (updated for multi-process) or start_direct.sh
-CMD ["./start_gunicorn.sh"]
+CMD ["./start.sh"]
 
 # Alternative direct startup (uncomment to use):
 # CMD ["./start_direct.sh"]
