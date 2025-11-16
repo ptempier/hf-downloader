@@ -74,7 +74,24 @@ def perform_download(repo_id, quant_pattern, status_queue):
         local_dir = f"/models/{repo_id}"
         os.makedirs(local_dir, exist_ok=True)
 
-        allow_patterns = [f"*{quant_pattern}*"] if quant_pattern.strip() else None
+        # Build allow patterns - include quant pattern and additional files
+        allow_patterns = []
+        if quant_pattern.strip():
+            allow_patterns.append(f"*{quant_pattern}*")
+        
+        # Always include these additional patterns if they exist
+        additional_patterns = [
+            "*.json",           # All JSON files (config, tokenizer, etc.)
+            "params",         # params files
+            "template",       # template files
+            "mmproj-BF16.gguf", # mmproj file
+            "*.jinja"           # jinja template files
+        ]
+        allow_patterns.extend(additional_patterns)
+        
+        # If no patterns specified, download everything
+        if not allow_patterns:
+            allow_patterns = None
 
         # Get repository info
         status_queue.put({
@@ -110,6 +127,7 @@ def perform_download(repo_id, quant_pattern, status_queue):
             local_dir=local_dir,
             allow_patterns=allow_patterns,
             resume_download=True,
+            force_download=False,  # Don't re-download if file already exists and is valid
             local_dir_use_symlinks=False,
             cache_dir=cache_dir
         )
