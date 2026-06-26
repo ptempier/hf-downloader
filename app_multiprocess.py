@@ -50,6 +50,7 @@ class AppState:
             "start_time": None
         })
         self.pending_tasks = manager.dict()  # Track pending responses
+        self.task_order = manager.list()  # FIFO order of task_ids, mirrors task_queue processing order
     
     def update_status(self, **kwargs):
         """Update download status"""
@@ -66,7 +67,7 @@ class AppState:
 
 # ============== FLASK WEB SERVER ==============
 
-def create_flask_app(app_state, task_queue, monitor_requests_queue):
+def create_flask_app(app_state, task_queue):
     """Create Flask application with IPC communication"""
     
     app = Flask(__name__)
@@ -109,10 +110,13 @@ def create_flask_app(app_state, task_queue, monitor_requests_queue):
         if not validate_repo_id(repo_id):
             return jsonify({'error': 'Repository ID should be in format: username/model-name'}), 400
 
-        if app_state.download_status["status"] == "downloading":
-            return jsonify({'error': 'Download already in progress'}), 400
-
-        # Generate task ID and send to download manager
+        # Generate task ID and send to download manager. The download manager
+        # processes task_queue strictly FIFO, one task at a time, so it's
+        # safe to always accept the task here -- it will simply queue behind
+        # whatever is already running. Monitoring for this repo is started
+        # by status_update_processor once the download manager actually
+        # picks up the task (see its 'starting' status update), not here.
+        queue_position = len(app_state.task_order)
         task_id = str(uuid.uuid4())
         task = {
             'task_id': task_id,
@@ -120,22 +124,16 @@ def create_flask_app(app_state, task_queue, monitor_requests_queue):
             'repo_id': repo_id,
             'quant_pattern': quant_pattern
         }
-        
+
         # Add to pending tasks
         app_state.pending_tasks[task_id] = task
-        
+        app_state.task_order.append(task_id)
+
         # Send task to download manager
         task_queue.put(task)
-        
-        # Start monitoring
-        monitor_requests_queue.put({
-            'type': 'start_monitor',
-            'repo_id': repo_id,
-            'local_dir': f"/models/{repo_id}",
-            'total_expected_bytes': 0  # Will be updated by download manager
-        })
-        
-        return jsonify({'message': 'Download started', 'task_id': task_id})
+
+        message = 'Download started' if queue_position == 0 else f'Download queued (position {queue_position})'
+        return jsonify({'message': message, 'task_id': task_id, 'queue_position': queue_position})
 
     def get_status():
         return jsonify(dict(app_state.download_status))
@@ -153,6 +151,7 @@ def create_flask_app(app_state, task_queue, monitor_requests_queue):
             return jsonify({'error': 'Invalid repository ID'}), 400
 
         # Generate task ID and send to download manager
+        queue_position = len(app_state.task_order)
         task_id = str(uuid.uuid4())
         task = {
             'task_id': task_id,
@@ -160,19 +159,13 @@ def create_flask_app(app_state, task_queue, monitor_requests_queue):
             'repo_id': repo_id,
             'quant_pattern': quant_pattern
         }
-        
+
         app_state.pending_tasks[task_id] = task
+        app_state.task_order.append(task_id)
         task_queue.put(task)
-        
-        # Start monitoring
-        monitor_requests_queue.put({
-            'type': 'start_monitor',
-            'repo_id': repo_id,
-            'local_dir': f"/models/{repo_id}",
-            'total_expected_bytes': 0
-        })
-        
-        return jsonify({'message': f'Update started for {repo_id}', 'task_id': task_id})
+
+        message = f'Update started for {repo_id}' if queue_position == 0 else f'Update for {repo_id} queued (position {queue_position})'
+        return jsonify({'message': message, 'task_id': task_id, 'queue_position': queue_position})
 
     def api_delete_model():
         data = request.get_json() or {}
@@ -188,15 +181,34 @@ def create_flask_app(app_state, task_queue, monitor_requests_queue):
             'type': 'delete',
             'model_path': model_path
         }
-        
+
         app_state.pending_tasks[task_id] = task
+        app_state.task_order.append(task_id)
         task_queue.put(task)
-        
+
         return jsonify({'message': f'Delete started for {model_path}', 'task_id': task_id})
+
+    def api_queue():
+        """Expose the FIFO order of pending tasks. Index 0 is the task
+        currently being processed by the download manager (or about to be);
+        the rest are waiting behind it."""
+        items = []
+        for tid in list(app_state.task_order):
+            task = app_state.pending_tasks.get(tid)
+            if not task:
+                continue
+            items.append({
+                'task_id': tid,
+                'type': task['type'],
+                'repo_id': task.get('repo_id'),
+                'model_path': task.get('model_path')
+            })
+        return jsonify({'queue': items})
 
     # Register all routes
     add_url_rule_with_prefix('/', 'index', index)
     add_url_rule_with_prefix('/api/download', 'start_download', start_download, methods=['POST'])
+    add_url_rule_with_prefix('/api/queue', 'api_queue', api_queue)
     add_url_rule_with_prefix('/api/status', 'get_status', get_status)
     add_url_rule_with_prefix('/api/list', 'api_models', api_models)
     add_url_rule_with_prefix('/api/update', 'api_update_model', api_update_model, methods=['POST'])
@@ -217,14 +229,42 @@ def status_update_processor(status_queue, response_queue, app_state, monitor_req
             try:
                 status_update = status_queue.get(timeout=1)
                 print(f"📊 Status update: {status_update}")
-                app_state.update_status(**status_update)
 
-                # Forward total_bytes to the monitor so it can compute real progress
-                if status_update.get('total_bytes', 0) > 0:
-                    monitor_requests_queue.put({
-                        'type': 'update_total',
-                        'total_expected_bytes': status_update['total_bytes']
-                    })
+                # The monitor service keeps polling for ~1s after a download
+                # finishes (it only stops once it processes 'stop_monitor',
+                # which is sent below after the task response arrives). Drop
+                # any stray 'downloading' update it sends in that window so
+                # it can't clobber a terminal status and leave the app stuck
+                # thinking a download is still in progress.
+                current_status = app_state.download_status.get('status')
+                is_stale_monitor_update = (
+                    status_update.get('status') == 'downloading'
+                    and current_status in ('completed', 'error', 'idle')
+                )
+                if not is_stale_monitor_update:
+                    app_state.update_status(**status_update)
+
+                    # The download manager sends this the moment it actually
+                    # picks up a download task (which may be later than when
+                    # it was submitted, if other tasks were queued ahead of
+                    # it). Start monitoring here, not at submission time, so
+                    # the monitor always watches whichever repo is currently
+                    # being downloaded.
+                    if status_update.get('status') == 'starting' and status_update.get('repo_id'):
+                        repo_id = status_update['repo_id']
+                        monitor_requests_queue.put({
+                            'type': 'start_monitor',
+                            'repo_id': repo_id,
+                            'local_dir': f"/models/{repo_id}",
+                            'total_expected_bytes': 0
+                        })
+
+                    # Forward total_bytes to the monitor so it can compute real progress
+                    if status_update.get('total_bytes', 0) > 0:
+                        monitor_requests_queue.put({
+                            'type': 'update_total',
+                            'total_expected_bytes': status_update['total_bytes']
+                        })
             except:
                 pass  # Timeout, continue
             
@@ -238,9 +278,16 @@ def status_update_processor(status_queue, response_queue, app_state, monitor_req
                     # Task completed, handle cleanup
                     task = app_state.pending_tasks[task_id]
                     del app_state.pending_tasks[task_id]
-                    
-                    if task['type'] == 'download' and response['success']:
-                        # Download completed, stop monitoring after a delay
+                    try:
+                        app_state.task_order.remove(task_id)
+                    except ValueError:
+                        pass
+
+                    if task['type'] == 'download':
+                        # Stop monitoring whether the download succeeded or
+                        # failed -- otherwise a failed download leaves the
+                        # monitor running forever, continuously overwriting
+                        # the 'error' status with 'downloading'.
                         monitor_requests_queue.put({'type': 'stop_monitor'})
                     
                     print(f"✅ Task {task_id} completed: {response['message']}")
@@ -312,7 +359,7 @@ def main():
     print("✅ Status Update Processor started")
     
     # 4. Flask Web Server (runs in main process)
-    flask_app = create_flask_app(app_state, task_queue, monitor_requests_queue)
+    flask_app = create_flask_app(app_state, task_queue)
     
     print(f"💾 Models Directory: /models/")
     print(f"🗂️ Cache Directory: /models/.cache/")

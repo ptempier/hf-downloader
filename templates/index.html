@@ -255,7 +255,23 @@
             width: 100%;
             height: 110px;
         }
-        
+
+        #queueContainer {
+            margin: 1rem 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+
+        .queue-item {
+            padding: 0.5rem 0.75rem;
+            border-radius: 5px;
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            font-size: 0.9rem;
+        }
+
         .hidden {
             display: none !important;
         }
@@ -343,8 +359,12 @@
                 </div>
                 
                 <button type="submit" id="downloadBtn" class="btn">Start Download</button>
+                <small>You can submit multiple downloads; they queue and run one at a time.</small>
             </form>
-            
+
+            <!-- Pending/active task queue -->
+            <div id="queueContainer" class="hidden"></div>
+
             <!-- Progress Bar -->
             <div id="progressContainer" class="hidden">
                 <div class="progress-bar">
@@ -407,18 +427,15 @@
         // Configuration
         const BASE_URL = window.BASE_URL || '';
         
-        // HTTP polling for progress updates
+        // HTTP polling for progress updates. Runs continuously for the life
+        // of the page (started once in init()) so that a queued download
+        // which starts on its own -- with no user click to "wake up"
+        // polling -- is still picked up.
         let pollInterval = null;
-        
-        function initializePolling() {
-            console.log('� Initializing HTTP polling for progress updates');
-            // Start polling immediately if there's an active download
-            pollDownloadStatus();
-        }
-        
+
         function startPolling() {
-            if (pollInterval) clearInterval(pollInterval);
-            
+            if (pollInterval) return;
+
             pollInterval = setInterval(async () => {
                 try {
                     const response = await fetch(buildURL('api/status'));
@@ -429,27 +446,10 @@
                 } catch (error) {
                     console.warn('Polling failed:', error);
                 }
+                loadQueue();
             }, 1000); // Poll every 1 second
         }
-        
-        function stopPolling() {
-            if (pollInterval) {
-                clearInterval(pollInterval);
-                pollInterval = null;
-            }
-        }
-        async function pollDownloadStatus() {
-            try {
-                const response = await fetch(buildURL('api/status'));
-                if (response.ok) {
-                    const data = await response.json();
-                    handleDownloadProgress(data);
-                }
-            } catch (error) {
-                console.warn('Status poll failed:', error);
-            }
-        }
-        
+
         // Utility functions
         function buildURL(path) {
             const cleanPath = path.replace(/^\/+/, '');
@@ -615,46 +615,39 @@
             ctx.fillText('\u2190 5 min', W - 52, H - 4);
         }
 
-        // Download management with fallback support
-        let isDownloading = false;
-        
+        // Download management. Polling runs continuously (started once at
+        // init) since the download manager processes a queue: once one
+        // download finishes, the next queued one starts on its own, with no
+        // user action to "wake up" polling for it.
+        let lastStatus = null;
+
         function handleDownloadProgress(data) {
             const { progress, status, current_file } = data;
+            const statusChanged = status !== lastStatus;
+            lastStatus = status;
 
             if (data.download_speed !== undefined) {
                 pushSpeedSample(data.download_speed);
             }
 
             if (status === 'completed') {
-                updateProgressUI(progress, status, current_file);
-                addLog('===== DOWNLOAD COMPLETED =====', 'success');
-                stopPolling();
-                isDownloading = false;
+                updateProgressUI(progress, status, current_file, statusChanged);
+                if (statusChanged) addLog('===== DOWNLOAD COMPLETED =====', 'success');
             } else if (status === 'error') {
-                updateProgressUI(progress, status, current_file);
-                addLog('===== DOWNLOAD FAILED =====', 'error');
-                stopPolling();
-                isDownloading = false;
+                updateProgressUI(progress, status, current_file, statusChanged);
+                if (statusChanged) addLog('===== DOWNLOAD FAILED =====', 'error');
             } else if (status === 'downloading' || status === 'starting') {
-                updateProgressUI(progress || 0, status, current_file);
+                updateProgressUI(progress || 0, status, current_file, statusChanged);
+                if (statusChanged) addLog('🚀 ===== DOWNLOAD STARTED =====', 'info');
                 if (progress !== undefined && current_file) {
                     addProgressLog(`🔥 ${current_file}`, progress);
                 } else if (current_file) {
-                    addLog(`� ${current_file}`, 'info');
+                    addLog(`ℹ️ ${current_file}`, 'info');
                 }
-                
-                // Ensure polling is active during download
-                if (!pollInterval) {
-                    startPolling();
-                }
-            } else if (status === 'idle' && isDownloading) {
-                // Download finished
-                isDownloading = false;
-                stopPolling();
             }
         }
-        
-        function updateProgressUI(progress, status, message = '') {
+
+        function updateProgressUI(progress, status, message = '', changed = true) {
             const progressFill = document.getElementById('progressFill');
             const progressText = document.getElementById('progressText');
             const progressContainer = document.getElementById('progressContainer');
@@ -666,36 +659,21 @@
             progressFill.style.width = `${progress}%`;
             progressText.textContent = `${Math.round(progress)}%`;
 
+            if (!changed) return;
+
             if (status === 'completed') {
                 addLog(`✅ ${message}`, 'success');
-                setTimeout(() => {
-                    resetDownloadUI();
-                    loadModels();
-                }, 3000);
+                speedHistory.fill(null);
+                drawSpeedGraph();
+                loadModels();
             } else if (status === 'error') {
                 addLog(`❌ ${message}`, 'error');
-                resetDownloadUI();
+                speedHistory.fill(null);
+                drawSpeedGraph();
+            } else if (status === 'downloading' || status === 'starting') {
+                speedHistory.fill(null);
+                drawSpeedGraph();
             }
-        }
-        
-        function resetDownloadUI() {
-            isDownloading = false;
-            stopPolling();
-            document.getElementById('downloadBtn').disabled = false;
-            document.getElementById('downloadBtn').textContent = 'Start Download';
-            speedHistory.fill(null);
-            drawSpeedGraph();
-        }
-        
-        function startDownloadUI() {
-            isDownloading = true;
-            document.getElementById('downloadBtn').disabled = true;
-            document.getElementById('downloadBtn').textContent = 'Downloading...';
-            addLog('🚀 ===== DOWNLOAD STARTED =====', 'info');
-            speedHistory.fill(null);
-            drawSpeedGraph();
-            // Start polling for progress updates
-            startPolling();
         }
         
         // Model management
@@ -890,7 +868,6 @@
         // Event listeners
         document.getElementById('downloadForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            if (isDownloading) return;
 
             const formData = new FormData(e.target);
             const data = {
@@ -909,7 +886,6 @@
             }
 
             try {
-                startDownloadUI();
                 const response = await fetch(buildURL('api/download'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -918,12 +894,20 @@
                 const result = await response.json();
                 if (!response.ok) throw new Error(result.error || 'Download failed');
 
-                addLog(`📋 Download request sent for: ${data.repo_id}`, 'info');
+                if (result.queue_position > 0) {
+                    addLog(`⏳ Queued for ${data.repo_id} (position ${result.queue_position})`, 'info');
+                } else {
+                    addLog(`📋 Download request sent for: ${data.repo_id}`, 'info');
+                }
                 if (data.quant_pattern) addLog(`🔍 Pattern filter: ${data.quant_pattern}`, 'info');
+
+                // Submitting a download doesn't block the form -- multiple
+                // downloads can be queued one after another.
+                e.target.reset();
+                loadQueue();
 
             } catch (error) {
                 addLog(`❌ Error: ${error.message}`, 'error');
-                resetDownloadUI();
             }
         });
         
@@ -956,45 +940,50 @@
                 loadModels();
             }
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                if (!isDownloading) document.getElementById('downloadForm').dispatchEvent(new Event('submit'));
+                document.getElementById('downloadForm').dispatchEvent(new Event('submit'));
             }
         });
-        
+
+        // Render the queue of pending/in-progress download & delete tasks
+        async function loadQueue() {
+            try {
+                const response = await fetch(buildURL('api/queue'));
+                if (!response.ok) return;
+                const { queue } = await response.json();
+                const container = document.getElementById('queueContainer');
+                if (!container) return;
+
+                if (queue.length === 0) {
+                    container.classList.add('hidden');
+                    container.innerHTML = '';
+                    return;
+                }
+
+                container.classList.remove('hidden');
+                container.innerHTML = queue.map((item, idx) => {
+                    const label = item.type === 'delete' ? `🗑️ Delete ${item.model_path}` : `📦 ${item.repo_id}`;
+                    const state = idx === 0 ? 'En cours' : `En attente (#${idx})`;
+                    return `<div class="queue-item">${label} — <em>${state}</em></div>`;
+                }).join('');
+            } catch (error) {
+                console.warn('Failed to load queue:', error);
+            }
+        }
+
         // Initialize application with polling-only mode
         function init() {
             console.log(`� Initializing app with BASE_URL: "${BASE_URL}"`);
             console.log('� Using HTTP polling for progress updates');
-            
-            
-            // Load models and check for ongoing downloads
+
+            // Load models, then poll continuously: the download queue is
+            // processed server-side and can pick up new tasks at any time,
+            // not just right after the user clicks "Start Download".
             loadModels();
-            checkOngoingDownload();
+            loadQueue();
+            startPolling();
             addLog('🚀 Application ready - polling mode', 'info');
         }
-        
-        // Check if there's an ongoing download when app starts
-        async function checkOngoingDownload() {
-            try {
-                const response = await fetch(buildURL('api/status'));
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data.status === 'downloading' || data.status === 'starting') {
-                        isDownloading = true;
-                        document.getElementById('downloadBtn').disabled = true;
-                        document.getElementById('downloadBtn').textContent = 'Downloading...';
-                        addLog('🔄 Detected ongoing download, resuming monitoring...', 'info');
-                        
-                        // Start polling for progress updates
-                        startPolling();
-                        
-                        handleDownloadProgress(data);
-                    }
-                }
-            } catch (error) {
-                console.warn('Failed to check ongoing download:', error);
-            }
-        }
-        
+
         // Start when page loads
         window.addEventListener('load', init);
     </script>
