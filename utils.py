@@ -104,10 +104,17 @@ def create_file_metadata(file_path):
 
 
 def calculate_downloaded_size(local_dir, cache_dir, repo_id):
-    """Calculate total bytes downloaded by checking both final and cache directories"""
+    """Calculate total bytes downloaded by checking both final and cache directories.
+
+    Counting strategy to avoid double-counting:
+    - Completed files: counted from local_dir (they were copied there from cache).
+    - Partially-downloaded files: counted from *.incomplete blobs in the cache
+      (these are blobs currently being written by hf_transfer/requests and do not
+      yet have a copy in local_dir).
+    """
     total_downloaded = 0
-    
-    # Check final destination files
+
+    # 1. Count completed files in the final destination directory
     if os.path.exists(local_dir):
         local_path = Path(local_dir)
         for file_path in local_path.rglob('*'):
@@ -116,17 +123,18 @@ def calculate_downloaded_size(local_dir, cache_dir, repo_id):
                     total_downloaded += file_path.stat().st_size
                 except (OSError, IOError):
                     continue
-    
-    # Check cache for incomplete files and blobs
+
+    # 2. Count ONLY incomplete (in-progress) blobs in the cache.
+    #    Complete blobs are intentionally skipped – their data is already
+    #    reflected by the copy in local_dir above.
     cache_repo_dir = Path(cache_dir) / f"models--{repo_id.replace('/', '--')}"
     if cache_repo_dir.exists():
-        for file_path in cache_repo_dir.rglob('*'):
-            if file_path.is_file():
-                try:
-                    total_downloaded += file_path.stat().st_size
-                except (OSError, IOError):
-                    continue
-    
+        for file_path in cache_repo_dir.rglob('*.incomplete'):
+            try:
+                total_downloaded += file_path.stat().st_size
+            except (OSError, IOError):
+                continue
+
     return total_downloaded
 
 

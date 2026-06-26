@@ -218,6 +218,13 @@ def status_update_processor(status_queue, response_queue, app_state, monitor_req
                 status_update = status_queue.get(timeout=1)
                 print(f"📊 Status update: {status_update}")
                 app_state.update_status(**status_update)
+
+                # Forward total_bytes to the monitor so it can compute real progress
+                if status_update.get('total_bytes', 0) > 0:
+                    monitor_requests_queue.put({
+                        'type': 'update_total',
+                        'total_expected_bytes': status_update['total_bytes']
+                    })
             except:
                 pass  # Timeout, continue
             

@@ -243,29 +243,17 @@
             color: #333;
         }
         
-        .status-message {
-            padding: 0.75rem;
-            border-radius: 5px;
-            margin: 1rem 0;
-            font-weight: 500;
+        .speed-graph-container {
+            margin-top: 1rem;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #1a1a2e;
         }
-        
-        .status-success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        
-        .status-error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        
-        .status-info {
-            background: #d1ecf1;
-            color: #0c5460;
-            border: 1px solid #bee5eb;
+
+        #speedGraph {
+            display: block;
+            width: 100%;
+            height: 110px;
         }
         
         .hidden {
@@ -363,7 +351,9 @@
                     <div id="progressFill" class="progress-fill"></div>
                     <div id="progressText" class="progress-text">0%</div>
                 </div>
-                <div id="statusMessage" class="status-message"></div>
+                <div class="speed-graph-container">
+                    <canvas id="speedGraph"></canvas>
+                </div>
             </div>
         </div>
         
@@ -439,7 +429,7 @@
                 } catch (error) {
                     console.warn('Polling failed:', error);
                 }
-            }, 3000); // Poll every 3 seconds
+            }, 1000); // Poll every 1 second
         }
         
         function stopPolling() {
@@ -508,12 +498,133 @@
             document.getElementById('console').scrollTop = document.getElementById('console').scrollHeight;
         }
         
+        // ---- Speed Graph ----
+        const GRAPH_SECONDS = 300; // 5 minutes
+        const speedHistory = new Array(GRAPH_SECONDS).fill(null);
+
+        function pushSpeedSample(speedBytesPerSec) {
+            const mbps = speedBytesPerSec / (1024 * 1024);
+            speedHistory.push(mbps);
+            if (speedHistory.length > GRAPH_SECONDS) speedHistory.shift();
+            drawSpeedGraph();
+        }
+
+        // Round up to a visually clean axis ceiling
+        function niceMax(val) {
+            if (val <= 0) return 50;
+            const magnitude = Math.pow(10, Math.floor(Math.log10(val)));
+            const n = val / magnitude;
+            const nice = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+            return nice * magnitude;
+        }
+
+        function drawSpeedGraph() {
+            const canvas = document.getElementById('speedGraph');
+            if (!canvas) return;
+            if (canvas.offsetWidth > 0) canvas.width = canvas.offsetWidth;
+            canvas.height = 110;
+            const ctx = canvas.getContext('2d');
+            const W = canvas.width;
+            const H = canvas.height;
+
+            ctx.fillStyle = '#1a1a2e';
+            ctx.fillRect(0, 0, W, H);
+
+            // Compute smoothed values once so autoscale and points share the same data
+            const smoothed = speedHistory.map((val, i) => {
+                if (val === null) return null;
+                const samples = [val];
+                if (i >= 1 && speedHistory[i - 1] !== null) samples.push(speedHistory[i - 1]);
+                if (i >= 2 && speedHistory[i - 2] !== null) samples.push(speedHistory[i - 2]);
+                return samples.reduce((a, b) => a + b, 0) / samples.length;
+            });
+
+            // Autoscale: max visible value + 25 % headroom, rounded to a nice ceiling
+            const maxVisible = Math.max(0, ...smoothed.filter(v => v !== null));
+            const axisMax = niceMax(maxVisible * 1.25);
+
+            // Dynamic grid lines: 4 evenly spaced ticks
+            const tickStep = axisMax / 4;
+            for (let t = 1; t <= 4; t++) {
+                const mb = tickStep * t;
+                const y = H - (mb / axisMax) * H;
+                ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(W, y);
+                ctx.stroke();
+                ctx.fillStyle = 'rgba(255,255,255,0.45)';
+                ctx.font = '10px monospace';
+                const label = mb >= 1000 ? (mb / 1024).toFixed(1) + ' GB/s' : Math.round(mb) + ' MB/s';
+                ctx.fillText(label, 4, y - 3);
+            }
+
+            // Build display points
+            const step = W / GRAPH_SECONDS;
+            const pts = [];
+            smoothed.forEach((val, i) => {
+                if (val === null) return;
+                pts.push({
+                    x: i * step,
+                    y: H - (Math.min(val, axisMax) / axisMax) * H
+                });
+            });
+
+            if (pts.length > 1) {
+                // Filled area under curve
+                const grad = ctx.createLinearGradient(0, 0, 0, H);
+                grad.addColorStop(0, 'rgba(102,126,234,0.7)');
+                grad.addColorStop(1, 'rgba(118,75,162,0.1)');
+                ctx.beginPath();
+                ctx.moveTo(pts[0].x, pts[0].y);
+                pts.forEach(p => ctx.lineTo(p.x, p.y));
+                ctx.lineTo(pts[pts.length - 1].x, H);
+                ctx.lineTo(pts[0].x, H);
+                ctx.closePath();
+                ctx.fillStyle = grad;
+                ctx.fill();
+
+                // Line
+                ctx.beginPath();
+                ctx.moveTo(pts[0].x, pts[0].y);
+                pts.forEach(p => ctx.lineTo(p.x, p.y));
+                ctx.strokeStyle = '#667eea';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+
+            // Current speed label (top right) — smoothed over last 3 samples
+            const validTail = smoothed.filter(v => v !== null).slice(-3);
+            const lastVal = validTail.length > 0
+                ? validTail.reduce((a, b) => a + b, 0) / validTail.length
+                : null;
+            if (lastVal != null) {
+                const label = lastVal >= 1000
+                    ? (lastVal / 1024).toFixed(2) + ' GB/s'
+                    : lastVal.toFixed(1) + ' MB/s';
+                ctx.font = 'bold 15px monospace';
+                ctx.fillStyle = 'white';
+                const tw = ctx.measureText(label).width;
+                ctx.fillText(label, W - tw - 8, 18);
+            }
+
+            // Time axis hint (bottom right)
+            ctx.font = '10px monospace';
+            ctx.fillStyle = 'rgba(255,255,255,0.4)';
+            ctx.fillText('\u2190 5 min', W - 52, H - 4);
+        }
+
         // Download management with fallback support
         let isDownloading = false;
         
         function handleDownloadProgress(data) {
             const { progress, status, current_file } = data;
-            
+
+            if (data.download_speed !== undefined) {
+                pushSpeedSample(data.download_speed);
+            }
+
             if (status === 'completed') {
                 updateProgressUI(progress, status, current_file);
                 addLog('===== DOWNLOAD COMPLETED =====', 'success');
@@ -546,31 +657,24 @@
         function updateProgressUI(progress, status, message = '') {
             const progressFill = document.getElementById('progressFill');
             const progressText = document.getElementById('progressText');
-            const statusMessage = document.getElementById('statusMessage');
             const progressContainer = document.getElementById('progressContainer');
-            
+
             if (status === 'downloading' || status === 'starting') {
                 progressContainer.classList.remove('hidden');
             }
-            
+
             progressFill.style.width = `${progress}%`;
             progressText.textContent = `${Math.round(progress)}%`;
-            statusMessage.textContent = message;
-            statusMessage.className = 'status-message';
-            
+
             if (status === 'completed') {
-                statusMessage.classList.add('status-success');
                 addLog(`✅ ${message}`, 'success');
                 setTimeout(() => {
                     resetDownloadUI();
                     loadModels();
                 }, 3000);
             } else if (status === 'error') {
-                statusMessage.classList.add('status-error');
                 addLog(`❌ ${message}`, 'error');
                 resetDownloadUI();
-            } else if (status === 'downloading' || status === 'starting') {
-                statusMessage.classList.add('status-info');
             }
         }
         
@@ -579,6 +683,8 @@
             stopPolling();
             document.getElementById('downloadBtn').disabled = false;
             document.getElementById('downloadBtn').textContent = 'Start Download';
+            speedHistory.fill(null);
+            drawSpeedGraph();
         }
         
         function startDownloadUI() {
@@ -586,7 +692,8 @@
             document.getElementById('downloadBtn').disabled = true;
             document.getElementById('downloadBtn').textContent = 'Downloading...';
             addLog('🚀 ===== DOWNLOAD STARTED =====', 'info');
-            
+            speedHistory.fill(null);
+            drawSpeedGraph();
             // Start polling for progress updates
             startPolling();
         }

@@ -10,11 +10,13 @@ services:
       - ./models:/models:rw  # Mount models directory
       - hf-cache:/home/appuser/.cache/huggingface  # Cache HuggingFace models
     environment:
-      - HF_HUB_ENABLE_HF_TRANSFER=1
+      #- HF_HUB_ENABLE_HF_TRANSFER=1
+      - HF_HUB_ENABLE_HF_TRANSFER=0      
       # Multi-process architecture - no Gunicorn needed
       # - GUNICORN_CMD_ARGS removed for multi-process mode
       # Optional: Add your HuggingFace token for private models
       # - HF_TOKEN=your_hf_token_here
+      - HF_TOKEN=${HF_TOKEN}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/"]

@@ -21,6 +21,7 @@ def monitoring_service_process(status_queue, monitor_requests_queue):
     # Track current monitoring state
     current_monitor = None
     last_downloaded_bytes = 0
+    last_check_time = time.time()
     
     while True:
         try:
@@ -37,13 +38,20 @@ def monitoring_service_process(status_queue, monitor_requests_queue):
                         'start_time': time.time()
                     }
                     last_downloaded_bytes = 0
+                    last_check_time = time.time()
                     print(f"📊 Started monitoring {current_monitor['repo_id']}")
+                    
+                elif request['type'] == 'update_total':
+                    if current_monitor:
+                        current_monitor['total_expected_bytes'] = request['total_expected_bytes']
+                        print(f"📊 Updated total expected bytes: {get_file_size_from_bytes(request['total_expected_bytes'])}")
                     
                 elif request['type'] == 'stop_monitor':
                     if current_monitor:
                         print(f"🛑 Stopped monitoring {current_monitor['repo_id']}")
                     current_monitor = None
                     last_downloaded_bytes = 0
+                    last_check_time = time.time()
                     
                 elif request['type'] == 'shutdown':
                     print("🛑 Monitoring Service shutting down")
@@ -64,7 +72,16 @@ def monitoring_service_process(status_queue, monitor_requests_queue):
                 
                 # Calculate current downloaded bytes
                 downloaded_bytes = calculate_downloaded_size(local_dir, cache_dir, repo_id)
-                
+
+                # Calculate download speed
+                now = time.time()
+                elapsed_since_last = now - last_check_time
+                if elapsed_since_last > 0 and downloaded_bytes >= last_downloaded_bytes:
+                    speed_bytes_per_sec = (downloaded_bytes - last_downloaded_bytes) / elapsed_since_last
+                else:
+                    speed_bytes_per_sec = 0
+                last_check_time = now
+
                 # Calculate progress
                 if total_expected_bytes > 0:
                     progress = min(95, (downloaded_bytes / total_expected_bytes) * 100)
@@ -83,6 +100,7 @@ def monitoring_service_process(status_queue, monitor_requests_queue):
                     'status': 'downloading',
                     'current_file': f"{status_msg} ({progress_info})",
                     'downloaded_bytes': downloaded_bytes,
+                    'download_speed': speed_bytes_per_sec,
                     'monitor_time': time.time() - loop_start
                 }
                 
@@ -92,7 +110,7 @@ def monitoring_service_process(status_queue, monitor_requests_queue):
                 print(f"📊 Progress: {progress:.1f}% - {progress_info}")
             
             # Sleep for monitoring interval
-            time.sleep(3)  # Monitor every 3 seconds
+            time.sleep(1)  # Monitor every 1 second
             
         except Exception as e:
             print(f"❌ Error in monitoring service: {e}")

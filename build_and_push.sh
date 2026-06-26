@@ -1,5 +1,6 @@
 #!/bin/bash
 #set -x
+set -e
 
 IMG="hf-downloader"
 REPO="registry-sam.inria.fr:5000/aistuff"
@@ -25,6 +26,7 @@ echo "#==== git pull"
 git pull
 
 echo "#==== docker build"
+ZSTD=" --output type=docker,compression=zstd,compression-level=3 "
 docker build -t "$IMG:$TAG" .
 
 echo "#==== docker tag"
@@ -36,5 +38,6 @@ docker push "$REPO/$IMG:$TAG"
 docker push "$REPO/$IMG:latest"
 
 echo "#==== update version"
+echo " cur : $TAG , next : $(( $TAG + 1 ))"
 TAG=$(( $TAG + 1 ))
 echo "$TAG" > "$B_DIR/$IMG/.version"
