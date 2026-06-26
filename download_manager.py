@@ -74,24 +74,33 @@ def perform_download(repo_id, quant_pattern, status_queue):
         local_dir = f"/models/{repo_id}"
         os.makedirs(local_dir, exist_ok=True)
 
-        # Build allow patterns - include quant pattern and additional files
-        allow_patterns = []
+        # Build allow patterns - include quant pattern and additional files.
+        # Leaving quant_pattern empty means "download everything", so only
+        # restrict to additional_patterns when a quant filter is actually set.
+        allow_patterns = None
         if quant_pattern.strip():
-            allow_patterns.append(f"*{quant_pattern}*")
-        
-        # Always include these additional patterns if they exist
-        additional_patterns = [
-            "*.json",           # All JSON files (config, tokenizer, etc.)
-            "params",         # params files
-            "template",       # template files
-            "mmproj-BF16.gguf", # mmproj file
-            "*.jinja"           # jinja template files
-        ]
-        allow_patterns.extend(additional_patterns)
-        
-        # If no patterns specified, download everything
-        if not allow_patterns:
-            allow_patterns = None
+            allow_patterns = [f"*{quant_pattern}*"]
+
+            # Always include these additional (non-weight) files alongside
+            # the matched quant files.
+            additional_patterns = [
+                "*.json",            # config, tokenizer, generation_config, etc.
+                "*.jinja",           # chat templates
+                "*.md",              # README
+                "*.txt",             # vocab.txt, merges.txt, etc.
+                "*.py",              # modeling/configuration scripts some repos ship
+                "LICENSE*",
+                "*mmproj*",          # all mmproj vision-tower variants, not just one
+                "*imatrix*",
+                "*vocab*",
+                "*tokenizer*",       # e.g. tokenizer.model, not just tokenizer.json
+                "*special_tokens*",
+                "*added_tokens*",
+                "config.*",
+                "params*",
+                "template*",
+            ]
+            allow_patterns.extend(additional_patterns)
 
         # Get repository info
         status_queue.put({
