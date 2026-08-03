@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Modèles téléchargés — volume monté ./models:/models
+models/
+
+# Secrets / config locale
+.env
+.claude/settings.local.json
+
+# Logs & sauvegardes
+*.log
+*.bak
+*~
